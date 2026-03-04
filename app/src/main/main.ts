@@ -341,6 +341,154 @@ async function generateAutoTitle(sessionId: number) {
   }
 }
 
+function todayDateStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function yesterdayDateStr(): string {
+  const d = new Date(Date.now() - 86400000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function buildStructuredDigest(dateStr: string): string | null {
+  const sessions = db.getSessionsForDate(dateStr);
+  if (!sessions.length) return null;
+
+  const d = new Date(dateStr + "T00:00:00");
+  const dayLabel = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const lines: string[] = [`## Daily Recap — ${dayLabel}`, ""];
+
+  let totalCaptures = 0;
+  const allApps = new Set<string>();
+
+  for (const s of sessions) {
+    const events = db.getEvents(s.id);
+    totalCaptures += events.length;
+    events.forEach((e) => allApps.add(e.app));
+  }
+
+  lines.push(`**${sessions.length}** session${sessions.length > 1 ? "s" : ""} · **${totalCaptures}** captures · ${[...allApps].join(", ") || "no apps"}`);
+  lines.push("");
+
+  for (const s of sessions) {
+    const events = db.getEvents(s.id);
+    const time = new Date(s.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const apps = [...new Set(events.map((e) => e.app))];
+    const preview = s.preview ? ` — ${s.preview}` : "";
+    lines.push(`- **${time}** · ${s.title} (${events.length} captures from ${apps.join(", ") || "unknown"})${preview}`);
+  }
+
+  if (allApps.size > 1) {
+    lines.push("");
+    lines.push("### App Usage");
+    const appCounts: Record<string, number> = {};
+    for (const s of sessions) {
+      const events = db.getEvents(s.id);
+      for (const e of events) {
+        appCounts[e.app] = (appCounts[e.app] || 0) + 1;
+      }
+    }
+    const sorted = Object.entries(appCounts).sort((a, b) => b[1] - a[1]);
+    for (const [name, count] of sorted) {
+      lines.push(`- ${name}: ${count} capture${count > 1 ? "s" : ""}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+async function generateDailySummary(dateStr: string): Promise<string | null> {
+  const existing = db.getDailySummary(dateStr);
+  if (existing) return existing.content;
+
+  const settings = db.getAllSettings();
+  if (settings.dailyRecapEnabled === "false") return null;
+
+  const sessions = db.getSessionsForDate(dateStr);
+  if (!sessions.length) return null;
+
+  const aiEnabled = settings.aiEnabled === "true";
+  const apiKey = settings.aiApiKey;
+
+  if (!aiEnabled || !apiKey) {
+    const digest = buildStructuredDigest(dateStr);
+    if (digest) db.saveDailySummary(dateStr, digest, false);
+    return digest;
+  }
+
+  const provider = settings.aiProvider || "openai";
+  const model = getModelForProvider(provider, settings.aiModel || "");
+
+  const d = new Date(dateStr + "T00:00:00");
+  const dayLabel = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  const sessionParts: string[] = [];
+  let totalCaptures = 0;
+  const allApps = new Set<string>();
+
+  for (const s of sessions) {
+    const events = db.getEvents(s.id);
+    totalCaptures += events.length;
+    const apps = [...new Set(events.map((e) => e.app))];
+    apps.forEach((a) => allApps.add(a));
+    const draft = db.getDraft(s.id);
+    const content = draft || events.map((e) => e.text).join("\n");
+    const time = new Date(s.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    sessionParts.push(`--- Session: "${s.title}" (${time}, ${events.length} captures from ${apps.join(", ")}) ---\n${content.slice(0, 3000)}`);
+  }
+
+  const systemPrompt = `You are writing a concise daily summary for ${dayLabel}. The user had ${sessions.length} session${sessions.length > 1 ? "s" : ""} with ${totalCaptures} captures across ${[...allApps].join(", ")}.
+
+Your job is to synthesize the day's work into a useful recap. Think of it as a journal entry that helps them remember what they did and what matters.
+
+Rules:
+- Start with "## Daily Recap — ${dayLabel}"
+- Write 4-7 bullet points covering the day's key activities, decisions, and takeaways
+- Group related work across sessions — don't just repeat session titles
+- Call out action items or unfinished work explicitly
+- If there were patterns (e.g. spent most of the day on X), mention it
+- Preserve specific names, numbers, URLs that might be useful later
+- Be conversational — write like a thoughtful colleague, not a report generator
+- No preamble. Just the recap.`;
+
+  try {
+    const summary = await callAiProvider(provider, model, apiKey, systemPrompt,
+      sessionParts.join("\n\n").slice(0, 15000),
+      2048
+    );
+    db.saveDailySummary(dateStr, summary, true);
+    broadcastState();
+    return summary;
+  } catch {
+    const digest = buildStructuredDigest(dateStr);
+    if (digest) db.saveDailySummary(dateStr, digest, false);
+    return digest;
+  }
+}
+
+let dailySummaryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleDailySummary() {
+  if (dailySummaryTimer) clearTimeout(dailySummaryTimer);
+
+  const now = new Date();
+  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 55, 0);
+  let delay = endOfDay.getTime() - now.getTime();
+  if (delay < 0) delay += 86400000;
+
+  dailySummaryTimer = setTimeout(async () => {
+    const settings = db.getAllSettings();
+    if (settings.dailyRecapEnabled !== "false") {
+      const dateStr = todayDateStr();
+      const sessions = db.getSessionsForDate(dateStr);
+      if (sessions.length > 0) {
+        await generateDailySummary(dateStr).catch(() => {});
+      }
+    }
+    scheduleDailySummary();
+  }, delay);
+}
+
 async function ensureTunnel(): Promise<string> {
   const provider = (db.getSetting("tunnelProvider") || "privateconnect") as "privateconnect" | "cloudflare";
 
@@ -705,6 +853,18 @@ async function initIpc() {
     db.clearAllData();
     broadcastState();
   });
+  ipcMain.handle("daily-summary:get", async (_event, dateStr: string) => {
+    const existing = db.getDailySummary(dateStr);
+    if (existing) return existing;
+    return null;
+  });
+  ipcMain.handle("daily-summary:generate", async (_event, dateStr: string) => {
+    const content = await generateDailySummary(dateStr);
+    return content ? db.getDailySummary(dateStr) : null;
+  });
+  ipcMain.handle("daily-summaries:list", () => {
+    return db.listDailySummaries();
+  });
   ipcMain.handle("ai:chat", async (_event, message: string, sessionId: number | null) => {
     const settings = db.getAllSettings();
     if (settings.aiEnabled !== "true") return "AI is not enabled. Go to Settings → AI Behavior to enable.";
@@ -893,6 +1053,14 @@ app.whenReady().then(async () => {
   createTray();
   startCaptureSocketServer();
   startHelper();
+  scheduleDailySummary();
+
+  if (db.getSetting("dailyRecapEnabled") !== "false") {
+    const yesterday = yesterdayDateStr();
+    if (!db.getDailySummary(yesterday) && db.getSessionsForDate(yesterday).length > 0) {
+      generateDailySummary(yesterday).catch(() => {});
+    }
+  }
 });
 
 app.on("before-quit", () => {

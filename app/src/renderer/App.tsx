@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppState, EventRow, SessionRow } from "../shared/types";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   ArrowLeftIcon,
   ClipboardDocumentIcon,
@@ -13,7 +15,7 @@ import {
   ShareIcon as ShareIconSolid,
   StopIcon
 } from "@heroicons/react/24/solid";
-import { Cog6ToothIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
+import { Cog6ToothIcon, MagnifyingGlassIcon, SparklesIcon, ChevronDownIcon } from "@heroicons/react/24/outline";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { SettingsModal } from "./SettingsModal";
 import { SearchPalette } from "./SearchPalette";
@@ -25,6 +27,62 @@ function formatDay(ts: number): string {
     month: "short",
     day: "numeric"
   });
+}
+
+function toDateStr(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function DailySummaryCard({ dateStr, enabled }: { dateStr: string; enabled: boolean }) {
+  const [summary, setSummary] = useState<{ content: string; isAi: number } | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [generating, setGenerating] = useState(false);
+
+  useEffect(() => {
+    window.sessionCaptureApi.getDailySummary(dateStr).then((s) => {
+      if (s) setSummary({ content: s.content, isAi: s.isAi });
+    }).catch(() => {});
+  }, [dateStr]);
+
+  async function handleGenerate() {
+    setGenerating(true);
+    try {
+      const result = await window.sessionCaptureApi.generateDailySummary(dateStr);
+      if (result) {
+        setSummary({ content: result.content, isAi: result.isAi });
+        setExpanded(true);
+      }
+    } catch {}
+    setGenerating(false);
+  }
+
+  if (!summary && !enabled) return null;
+
+  if (!summary) {
+    return (
+      <button className="daily-summary-generate" onClick={handleGenerate} disabled={generating}>
+        <SparklesIcon className="daily-summary-icon" />
+        <span>{generating ? "Generating recap..." : "Generate daily recap"}</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="daily-summary-card">
+      <button className="daily-summary-header" onClick={() => setExpanded(!expanded)}>
+        <SparklesIcon className="daily-summary-icon" />
+        <span className="daily-summary-label">Daily Recap</span>
+        {summary.isAi ? <span className="daily-summary-badge">AI</span> : null}
+        <ChevronDownIcon className={`daily-summary-chevron ${expanded ? "expanded" : ""}`} />
+      </button>
+      {expanded && (
+        <div className="daily-summary-body">
+          <Markdown remarkPlugins={[remarkGfm]}>{summary.content}</Markdown>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function App() {
@@ -43,6 +101,7 @@ export function App() {
   const [userHandle, setUserHandle] = useState("");
   const [userName, setUserName] = useState("");
   const [aiEnabled, setAiEnabled] = useState(false);
+  const [dailyRecapEnabled, setDailyRecapEnabled] = useState(true);
   const [settingsVersion, setSettingsVersion] = useState(0);
   const [draftVersion, setDraftVersion] = useState(0);
   const [updateAvailable, setUpdateAvailable] = useState<{ version: string; url: string } | null>(null);
@@ -112,6 +171,7 @@ export function App() {
       setUserHandle(s.handle || "");
       setUserName(s.name || "");
       setAiEnabled(s.aiEnabled === "true");
+      setDailyRecapEnabled(s.dailyRecapEnabled !== "false");
     }).catch(() => {});
     refreshSessions();
 
@@ -339,6 +399,7 @@ export function App() {
                   {sessionsByDay.map((group) => (
                     <div key={group.day} className="day-group">
                       <h3 className="day-label">{group.day}</h3>
+                      <DailySummaryCard dateStr={toDateStr(group.rows[0].createdAt)} enabled={dailyRecapEnabled} />
                       {group.rows.map((session) => (
                         <button
                           key={session.id}
@@ -557,6 +618,7 @@ export function App() {
               setUserHandle(s.handle || "");
               setUserName(s.name || "");
               setAiEnabled(s.aiEnabled === "true");
+              setDailyRecapEnabled(s.dailyRecapEnabled !== "false");
             }).catch(() => {});
           }}
           onAiEnabledChange={setAiEnabled}

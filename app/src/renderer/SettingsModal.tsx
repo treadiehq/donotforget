@@ -231,6 +231,23 @@ function GeneralTab({
         </div>
       </div>
 
+      <div className="ai-row" style={{ marginTop: 8 }}>
+        <div className="ai-row-info">
+          <span className="ai-row-title">Daily Recap</span>
+          <span className="ai-row-desc">
+            End-of-day summary of all sessions. Uses AI when enabled, otherwise a structured digest.
+          </span>
+        </div>
+        <button
+          className={`ai-enable-btn ${settings.dailyRecapEnabled !== "false" ? "active" : ""}`}
+          onClick={() =>
+            onUpdate("dailyRecapEnabled", settings.dailyRecapEnabled === "false" ? "true" : "false")
+          }
+        >
+          <span className="ai-enable-knob" />
+        </button>
+      </div>
+
       <div className="danger-zone">
         <div className="danger-zone-label">Danger Zone</div>
         <div className="danger-zone-row">
@@ -390,6 +407,7 @@ function AIBehaviorTab({
             <span className="ai-enable-knob" />
           </button>
         </div>
+
       </div>
 
       <div className="about-divider" />

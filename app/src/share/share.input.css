@@ -45,11 +45,40 @@
 .share-content p {
   @apply my-1 text-[0.92rem] leading-7 text-[#a8afc4];
 }
+.share-content ul {
+  @apply my-2 pl-5;
+}
+.share-content ol {
+  @apply my-2 pl-5;
+  list-style-type: decimal;
+}
 .share-content li {
-  @apply my-0.5 ml-5 list-disc text-[0.92rem] text-[#8b93a8];
+  @apply my-0.5 text-[0.92rem] text-[#a8afc4];
+  display: list-item;
+}
+.share-content ul > li {
+  list-style-type: disc;
 }
 .share-content li::marker {
   @apply text-[#2d3454];
+}
+.share-content strong {
+  @apply font-semibold text-[#e2e6f0];
+}
+.share-content em {
+  @apply italic text-[#c0c8e0];
+}
+.share-content a {
+  color: #60a5fa;
+  text-decoration: none;
+}
+.share-content a:hover {
+  text-decoration: underline;
+}
+.share-content hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  margin: 1.2em 0;
 }
 .share-content blockquote {
   @apply my-2.5 rounded-r-[10px] border-l-2 border-blue-400/25 bg-blue-400/[0.03] px-4 py-2.5;

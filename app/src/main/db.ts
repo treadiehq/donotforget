@@ -96,6 +96,15 @@ export class SessionDb {
     if (!cols.some((c) => c.name === "shareUrl")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN shareUrl TEXT");
     }
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS daily_summaries (
+        date TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        isAi INTEGER NOT NULL DEFAULT 0,
+        createdAt INTEGER NOT NULL
+      );
+    `);
   }
 
   createSession(title?: string): number {
@@ -377,5 +386,39 @@ export class SessionDb {
     const result: Record<string, string> = {};
     for (const row of rows) result[row.key] = row.value;
     return result;
+  }
+
+  getSessionsForDate(dateStr: string): SessionRow[] {
+    const d = new Date(dateStr + "T00:00:00");
+    const startMs = d.getTime();
+    const endMs = startMs + 86400000;
+    return this.db
+      .prepare(
+        `SELECT s.id, s.createdAt, s.title, s.isShared, s.shareToken, s.shareUrl,
+                (SELECT substr(trim(e.text), 1, 120) FROM events e WHERE e.sessionId = s.id AND trim(e.text) != '' ORDER BY e.ts ASC LIMIT 1) as preview
+         FROM sessions s WHERE s.createdAt >= ? AND s.createdAt < ? ORDER BY s.createdAt ASC`
+      )
+      .all(startMs, endMs) as SessionRow[];
+  }
+
+  getDailySummary(dateStr: string): { date: string; content: string; isAi: number; createdAt: number } | null {
+    const row = this.db
+      .prepare("SELECT date, content, isAi, createdAt FROM daily_summaries WHERE date = ?")
+      .get(dateStr) as { date: string; content: string; isAi: number; createdAt: number } | undefined;
+    return row ?? null;
+  }
+
+  saveDailySummary(dateStr: string, content: string, isAi: boolean): void {
+    this.db
+      .prepare(
+        "INSERT INTO daily_summaries(date, content, isAi, createdAt) VALUES(?, ?, ?, ?) ON CONFLICT(date) DO UPDATE SET content = excluded.content, isAi = excluded.isAi, createdAt = excluded.createdAt"
+      )
+      .run(dateStr, content, isAi ? 1 : 0, Date.now());
+  }
+
+  listDailySummaries(): Array<{ date: string; content: string; isAi: number; createdAt: number }> {
+    return this.db
+      .prepare("SELECT date, content, isAi, createdAt FROM daily_summaries ORDER BY date DESC LIMIT 30")
+      .all() as Array<{ date: string; content: string; isAi: number; createdAt: number }>;
   }
 }

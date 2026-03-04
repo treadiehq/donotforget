@@ -24,6 +24,9 @@ declare global {
       getSettings: () => Promise<Record<string, string>>;
       setSetting: (key: string, value: string) => Promise<void>;
       clearAllData: () => Promise<void>;
+      getDailySummary: (dateStr: string) => Promise<{ date: string; content: string; isAi: number; createdAt: number } | null>;
+      generateDailySummary: (dateStr: string) => Promise<{ date: string; content: string; isAi: number; createdAt: number } | null>;
+      listDailySummaries: () => Promise<Array<{ date: string; content: string; isAi: number; createdAt: number }>>;
       aiChat: (message: string, sessionId: number | null) => Promise<string>;
       aiEnhance: (sessionId: number) => Promise<string>;
       getVersion: () => Promise<string>;

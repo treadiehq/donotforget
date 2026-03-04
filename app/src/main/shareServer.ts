@@ -70,23 +70,40 @@ function esc(s: string): string {
   return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
+function inline(s: string): string {
+  let out = esc(s);
+  out = out.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/\*(.+?)\*/g, "<em>$1</em>");
+  out = out.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:#60a5fa;text-decoration:none" target="_blank" rel="noopener">$1</a>');
+  return out;
+}
+
 function markdownToHtml(md: string): string {
   const lines = md.split("\n");
   const out: string[] = [];
   let inCode = false;
   let inBlockquote = false;
   let inSection = false;
+  let inUl = false;
+  let inOl = false;
+
+  const closeUl = () => { if (inUl) { out.push("</ul>"); inUl = false; } };
+  const closeOl = () => { if (inOl) { out.push("</ol>"); inOl = false; } };
+  const closeLists = () => { closeUl(); closeOl(); };
+  const closeBq = () => { if (inBlockquote) { out.push("</blockquote>"); inBlockquote = false; } };
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
+    const trimmed = raw.trimStart();
 
-    if (raw.startsWith("```")) {
-      if (inBlockquote) { out.push("</blockquote>"); inBlockquote = false; }
+    if (trimmed.startsWith("```")) {
+      closeLists(); closeBq();
       if (inCode) {
         out.push("</code></pre>");
         inCode = false;
       } else {
-        const lang = esc(raw.slice(3).trim());
+        const lang = esc(trimmed.slice(3).trim());
         out.push(`<pre class="code-block"${lang ? ` data-lang="${lang}"` : ""}><code>`);
         inCode = true;
       }
@@ -95,30 +112,54 @@ function markdownToHtml(md: string): string {
 
     if (inCode) { out.push(esc(raw)); continue; }
 
-    if (raw.startsWith("> ")) {
-      if (!inBlockquote) { out.push('<blockquote>'); inBlockquote = true; }
-      out.push(`<p>${esc(raw.slice(2))}</p>`);
+    if (/^>\s?/.test(trimmed)) {
+      closeLists();
+      if (!inBlockquote) { out.push("<blockquote>"); inBlockquote = true; }
+      out.push(`<p>${inline(trimmed.replace(/^>\s?/, ""))}</p>`);
       continue;
     }
-    if (inBlockquote && raw.trim() === "") { out.push("</blockquote>"); inBlockquote = false; }
 
-    if (raw.startsWith("### ")) {
+    if (trimmed.startsWith("---") && trimmed.replace(/-/g, "").trim() === "") {
+      closeLists(); closeBq();
+      out.push('<hr style="border:none;border-top:1px solid rgba(255,255,255,0.06);margin:1.2em 0">');
+      continue;
+    }
+
+    if (trimmed.startsWith("### ")) {
+      closeLists(); closeBq();
       if (inSection) out.push("</div>");
       out.push(`<div class="capture-section">`);
-      out.push(`<div class="capture-heading">${esc(raw.slice(4))}</div>`);
+      out.push(`<div class="capture-heading">${inline(trimmed.slice(4))}</div>`);
       inSection = true;
       continue;
     }
-    if (raw.startsWith("# ")) { out.push(`<h1>${esc(raw.slice(2))}</h1>`); continue; }
-    if (raw.startsWith("## ")) { out.push(`<h2>${esc(raw.slice(3))}</h2>`); continue; }
-    if (raw.startsWith("- ")) { out.push(`<li>${esc(raw.slice(2))}</li>`); continue; }
-    if (raw.trim() === "") continue;
+    if (trimmed.startsWith("# ")) { closeLists(); closeBq(); out.push(`<h1>${inline(trimmed.slice(2))}</h1>`); continue; }
+    if (trimmed.startsWith("## ")) { closeLists(); closeBq(); out.push(`<h2>${inline(trimmed.slice(3))}</h2>`); continue; }
 
-    const inline = esc(raw).replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
-    out.push(`<p>${inline}</p>`);
+    if (/^[-*•–]\s/.test(trimmed)) {
+      closeBq(); closeOl();
+      if (!inUl) { out.push("<ul>"); inUl = true; }
+      out.push(`<li>${inline(trimmed.replace(/^[-*•–]\s+/, ""))}</li>`);
+      continue;
+    }
+
+    if (/^\d+[.)]\s/.test(trimmed)) {
+      closeBq(); closeUl();
+      if (!inOl) { out.push("<ol>"); inOl = true; }
+      out.push(`<li>${inline(trimmed.replace(/^\d+[.)]\s+/, ""))}</li>`);
+      continue;
+    }
+
+    if (raw.trim() === "") {
+      closeLists(); closeBq();
+      continue;
+    }
+
+    closeLists(); closeBq();
+    out.push(`<p>${inline(raw)}</p>`);
   }
 
-  if (inBlockquote) out.push("</blockquote>");
+  closeLists(); closeBq();
   if (inCode) out.push("</code></pre>");
   if (inSection) out.push("</div>");
   return out.join("\n");

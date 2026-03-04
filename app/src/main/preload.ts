@@ -37,6 +37,12 @@ const api = {
   aiEnhance: (sessionId: number) =>
     ipcRenderer.invoke("ai:enhance", sessionId) as Promise<string>,
   clearAllData: () => ipcRenderer.invoke("data:clear-all") as Promise<void>,
+  getDailySummary: (dateStr: string) =>
+    ipcRenderer.invoke("daily-summary:get", dateStr) as Promise<{ date: string; content: string; isAi: number; createdAt: number } | null>,
+  generateDailySummary: (dateStr: string) =>
+    ipcRenderer.invoke("daily-summary:generate", dateStr) as Promise<{ date: string; content: string; isAi: number; createdAt: number } | null>,
+  listDailySummaries: () =>
+    ipcRenderer.invoke("daily-summaries:list") as Promise<Array<{ date: string; content: string; isAi: number; createdAt: number }>>,
   getVersion: () => ipcRenderer.invoke("app:get-version") as Promise<string>,
   checkForUpdates: () => ipcRenderer.invoke("app:check-for-updates") as Promise<{
     available: boolean;
