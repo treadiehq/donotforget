@@ -606,6 +606,33 @@ Format your response as:
       return `Request failed: ${err.message || err}`;
     }
   });
+
+  ipcMain.handle("app:get-version", () => app.getVersion());
+
+  ipcMain.handle("app:check-for-updates", async () => {
+    try {
+      const res = await fetch("https://api.github.com/repos/treadiehq/donotforget/releases/latest", {
+        headers: { "Accept": "application/vnd.github+json", "User-Agent": "DoNotForget" }
+      });
+      if (!res.ok) return { available: false, error: `GitHub API error (${res.status})` };
+      const data = await res.json();
+      const latest = (data.tag_name || "").replace(/^v/, "");
+      const current = app.getVersion();
+      if (!latest) return { available: false };
+      const isNewer = latest.localeCompare(current, undefined, { numeric: true, sensitivity: "base" }) > 0;
+      const dmgAsset = data.assets?.find((a: any) => a.name?.endsWith(".dmg"));
+      return {
+        available: isNewer,
+        currentVersion: current,
+        latestVersion: latest,
+        releaseUrl: data.html_url || `https://github.com/treadiehq/donotforget/releases/tag/${data.tag_name}`,
+        downloadUrl: dmgAsset?.browser_download_url || null,
+        releaseNotes: data.body || ""
+      };
+    } catch (err: any) {
+      return { available: false, error: err.message || "Network error" };
+    }
+  });
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();

@@ -25,6 +25,16 @@ declare global {
       setSetting: (key: string, value: string) => Promise<void>;
       aiChat: (message: string, sessionId: number | null) => Promise<string>;
       aiEnhance: (sessionId: number) => Promise<string>;
+      getVersion: () => Promise<string>;
+      checkForUpdates: () => Promise<{
+        available: boolean;
+        currentVersion?: string;
+        latestVersion?: string;
+        releaseUrl?: string;
+        downloadUrl?: string;
+        releaseNotes?: string;
+        error?: string;
+      }>;
       onStateChanged: (listener: (state: AppState) => void) => () => void;
       onEventsUpdated: (listener: (sessionId: number) => void) => () => void;
     };

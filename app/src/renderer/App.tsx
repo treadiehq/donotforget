@@ -43,6 +43,7 @@ export function App() {
   const [userHandle, setUserHandle] = useState("");
   const [userName, setUserName] = useState("");
   const [aiEnabled, setAiEnabled] = useState(false);
+  const [updateAvailable, setUpdateAvailable] = useState<{ version: string; url: string } | null>(null);
   const titleFocused = useRef(false);
   const titleSaveTimer = useRef<ReturnType<typeof setTimeout>>();
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -111,6 +112,15 @@ export function App() {
       setAiEnabled(s.aiEnabled === "true");
     }).catch(() => {});
     refreshSessions();
+
+    window.sessionCaptureApi.checkForUpdates().then((result) => {
+      if (result.available && result.latestVersion) {
+        setUpdateAvailable({
+          version: result.latestVersion,
+          url: result.downloadUrl || result.releaseUrl || "https://github.com/treadiehq/donotforget/releases"
+        });
+      }
+    }).catch(() => {});
 
     const offState = window.sessionCaptureApi.onStateChanged(async (nextState) => {
       setState(nextState);
@@ -263,6 +273,18 @@ export function App() {
         <main className="workspace">
           <div className={`view-container ${view === "detail" ? "show-detail" : "show-list"}`}>
             <section className="list-view">
+              {updateAvailable && (
+                <div className="update-banner">
+                  <span>v{updateAvailable.version} is available</span>
+                  <button onClick={() => { window.open(updateAvailable.url, "_blank"); }}>
+                    Download
+                  </button>
+                  <button className="update-banner-dismiss" onClick={() => setUpdateAvailable(null)} aria-label="Dismiss">
+                    &times;
+                  </button>
+                </div>
+              )}
+
               {sessions.length > 0 && (
                 <header className="list-header">
                   <div>
@@ -281,8 +303,11 @@ export function App() {
 
               {sessions.length === 0 ? (
                 <div className="empty-state">
-                  <div className="empty-state-icon">
-                    <DocumentTextIcon />
+                  <div className="flex items-center justify-center mb-4"> 
+                    {/* <DocumentTextIcon /> */}
+                    <svg width="35" height="35" viewBox="0 0 296 296" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Do Not Forget" role="img">
+                      <path d="M148 296C82.3198 296 26.6344 253.215 7.28906 193.996H134C141.732 193.996 148 187.728 148 179.996C148 172.264 141.732 165.996 134 165.996L1.08594 165.996C0.370867 160.097 0 154.092 0 148C0 141.906 0.371222 135.897 1.08691 129.996L134 129.996C141.732 129.996 148 123.728 148 115.996C148 108.264 141.732 101.996 134 101.996L7.29102 101.996C26.6386 42.781 82.3226 0 148 0C229.738 0 296 66.2619 296 148C296 229.738 229.738 296 148 296Z" fill="currentColor"/>
+                    </svg>
                   </div>
                   <h2 className="empty-state-title">Welcome{userName ? `, ${userName}` : ""}!</h2>
                   <p className="empty-state-desc">

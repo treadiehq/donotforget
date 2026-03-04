@@ -1763,3 +1763,56 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   color: #60a5fa;
   font-weight: 600;
 }
+
+/* Update banner */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  margin: 12px 18px 0;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 8px;
+  font-size: 0.78rem;
+  color: #93c5fd;
+}
+.update-banner span {
+  flex: 1;
+  font-weight: 500;
+}
+.update-banner button {
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #fff;
+  background: #3b82f6;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.update-banner button:hover {
+  background: #2563eb;
+}
+.update-banner-dismiss {
+  background: transparent !important;
+  color: #4a5568 !important;
+  font-size: 1rem !important;
+  padding: 0 4px !important;
+  line-height: 1;
+}
+.update-banner-dismiss:hover {
+  color: #94a3b8 !important;
+  background: transparent !important;
+}
+
+.about-update-available {
+  background: rgba(59, 130, 246, 0.12) !important;
+  border-color: rgba(59, 130, 246, 0.25) !important;
+  color: #60a5fa !important;
+}
+.about-update-available:hover {
+  background: rgba(59, 130, 246, 0.2) !important;
+}

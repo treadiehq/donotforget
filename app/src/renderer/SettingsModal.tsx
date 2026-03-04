@@ -341,11 +341,36 @@ function AIBehaviorTab({
 }
 
 function AboutTab() {
-  const [updateStatus, setUpdateStatus] = useState<string>("");
+  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "latest" | "available" | "error">("idle");
+  const [version, setVersion] = useState("0.1.0");
+  const [updateInfo, setUpdateInfo] = useState<{ latestVersion?: string; releaseUrl?: string; downloadUrl?: string }>({});
 
-  const checkForUpdates = () => {
+  useEffect(() => {
+    window.sessionCaptureApi.getVersion().then(setVersion).catch(() => {});
+  }, []);
+
+  const checkForUpdates = async () => {
     setUpdateStatus("checking");
-    setTimeout(() => setUpdateStatus("latest"), 1500);
+    try {
+      const result = await window.sessionCaptureApi.checkForUpdates();
+      if (result.available) {
+        setUpdateStatus("available");
+        setUpdateInfo({
+          latestVersion: result.latestVersion,
+          releaseUrl: result.releaseUrl,
+          downloadUrl: result.downloadUrl
+        });
+      } else {
+        setUpdateStatus("latest");
+      }
+    } catch {
+      setUpdateStatus("error");
+    }
+  };
+
+  const openDownload = () => {
+    const url = updateInfo.downloadUrl || updateInfo.releaseUrl;
+    if (url) window.open(url, "_blank");
   };
 
   return (
@@ -359,12 +384,7 @@ function AboutTab() {
 
       <div className="about-row">
         <span className="about-row-label">Version</span>
-        <span className="about-row-value">0.1.0</span>
-      </div>
-
-      <div className="about-row">
-        <span className="about-row-label">Build</span>
-        <span className="about-row-value">{new Date().toISOString().slice(0, 10).replace(/-/g, ".")}</span>
+        <span className="about-row-value">{version}</span>
       </div>
 
       <div className="about-row">
@@ -376,28 +396,39 @@ function AboutTab() {
 
       <div className="about-row">
         <span className="about-row-label">Updates</span>
-        <button
-          className="about-update-btn"
-          onClick={checkForUpdates}
-          disabled={updateStatus === "checking"}
-        >
-          {updateStatus === "checking" ? (
-            <>
-              <svg className="about-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-              </svg>
-              Checking...
-            </>
-          ) : (
-            <>
-              <svg className="about-update-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M1 4v6h6M23 20v-6h-6" />
-                <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" />
-              </svg>
-              {updateStatus === "latest" ? "You're up to date" : "Check for Updates"}
-            </>
-          )}
-        </button>
+        {updateStatus === "available" ? (
+          <button className="about-update-btn about-update-available" onClick={openDownload}>
+            <svg className="about-update-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Download v{updateInfo.latestVersion}
+          </button>
+        ) : (
+          <button
+            className="about-update-btn"
+            onClick={checkForUpdates}
+            disabled={updateStatus === "checking"}
+          >
+            {updateStatus === "checking" ? (
+              <>
+                <svg className="about-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                </svg>
+                Checking...
+              </>
+            ) : (
+              <>
+                <svg className="about-update-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M1 4v6h6M23 20v-6h-6" />
+                  <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" />
+                </svg>
+                {updateStatus === "latest" ? "You're up to date" : updateStatus === "error" ? "Check failed — retry" : "Check for Updates"}
+              </>
+            )}
+          </button>
+        )}
       </div>
     </div>
   );

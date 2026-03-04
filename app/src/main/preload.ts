@@ -36,6 +36,16 @@ const api = {
     ipcRenderer.invoke("ai:chat", message, sessionId) as Promise<string>,
   aiEnhance: (sessionId: number) =>
     ipcRenderer.invoke("ai:enhance", sessionId) as Promise<string>,
+  getVersion: () => ipcRenderer.invoke("app:get-version") as Promise<string>,
+  checkForUpdates: () => ipcRenderer.invoke("app:check-for-updates") as Promise<{
+    available: boolean;
+    currentVersion?: string;
+    latestVersion?: string;
+    releaseUrl?: string;
+    downloadUrl?: string;
+    releaseNotes?: string;
+    error?: string;
+  }>,
   onStateChanged: (listener: (state: AppState) => void) => {
     const wrapped = (_event: unknown, state: AppState) => listener(state);
     ipcRenderer.on("state-changed", wrapped);
