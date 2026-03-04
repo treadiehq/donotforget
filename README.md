@@ -1,6 +1,6 @@
 # Do Not Forget
 
-A local-first macOS app that captures text from any app into recording sessions. Select text, copy it, and it's saved — no cloud, no sync, just your notes on your machine.
+A local-first macOS app that captures text from any app into recording sessions. Select text, copy it, and it's saved, no cloud, no sync, just your notes on your machine.
 
 ## Features
 
@@ -24,7 +24,7 @@ cd ../native-helper && swift build
 cd ../app && bun dev
 ```
 
-On first launch, grant Accessibility permissions when prompted — this lets the helper capture selected text from other apps.
+On first launch, grant Accessibility permissions when prompted, this lets the helper capture selected text from other apps.
 
 ## Package for macOS
 

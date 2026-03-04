@@ -263,31 +263,30 @@ export function App() {
         <main className="workspace">
           <div className={`view-container ${view === "detail" ? "show-detail" : "show-list"}`}>
             <section className="list-view">
-              <header className="list-header">
-                <div>
-                  <h1 className="flex items-center">
-                    {/* <svg width="18" height="18" viewBox="0 0 296 296" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Do Not Forget" role="img">
-                      <path d="M148 296C82.3198 296 26.6344 253.215 7.28906 193.996H134C141.732 193.996 148 187.728 148 179.996C148 172.264 141.732 165.996 134 165.996L1.08594 165.996C0.370867 160.097 0 154.092 0 148C0 141.906 0.371222 135.897 1.08691 129.996L134 129.996C141.732 129.996 148 123.728 148 115.996C148 108.264 141.732 101.996 134 101.996L7.29102 101.996C26.6386 42.781 82.3226 0 148 0C229.738 0 296 66.2619 296 148C296 229.738 229.738 296 148 296Z" fill="currentColor"/>
-                    </svg> */}
-                    <span className="">Welcome{userName ? `, ${userName}` : "!"}</span>
-                  </h1>
-                  <p>Capture selected, focused or copied text across apps into recording sessions.</p>
-                </div>
-                <div className="list-header-actions">
-                  <button className="new-session-btn" onClick={onCreateSession}>
-                    New
-                  </button>
-                </div>
-              </header>
+              {sessions.length > 0 && (
+                <header className="list-header">
+                  <div>
+                    <h1 className="flex items-center">
+                      <span className="">Welcome{userName ? `, ${userName}` : "!"}</span>
+                    </h1>
+                    <p>Capture selected, focused or copied text across apps into recording sessions.</p>
+                  </div>
+                  <div className="list-header-actions">
+                    <button className="new-session-btn" onClick={onCreateSession}>
+                      New
+                    </button>
+                  </div>
+                </header>
+              )}
 
               {sessions.length === 0 ? (
                 <div className="empty-state">
                   <div className="empty-state-icon">
                     <DocumentTextIcon />
                   </div>
-                  <h2 className="empty-state-title">No sessions yet</h2>
+                  <h2 className="empty-state-title">Welcome{userName ? `, ${userName}` : ""}!</h2>
                   <p className="empty-state-desc">
-                    Create a session and start recording to capture text from any app on your Mac.
+                   Capture selected, focused or copied text across apps into recording sessions.
                   </p>
                   <button className="empty-state-btn" onClick={onCreateSession}>
                     <PlusIcon className="empty-state-btn-icon" />
