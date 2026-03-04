@@ -36,14 +36,16 @@ function validateHandle(v: string): string | null {
 interface SettingsModalProps {
   onClose: () => void;
   onAiEnabledChange?: (enabled: boolean) => void;
+  onDataCleared?: () => void;
 }
 
-export function SettingsModal({ onClose, onAiEnabledChange }: SettingsModalProps) {
+export function SettingsModal({ onClose, onAiEnabledChange, onDataCleared }: SettingsModalProps) {
   const [tab, setTab] = useState<Tab>("general");
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+  const pendingChanges = useRef<Record<string, string>>({});
 
   useEffect(() => {
     window.sessionCaptureApi.getSettings().then((s) => {
@@ -71,12 +73,16 @@ export function SettingsModal({ onClose, onAiEnabledChange }: SettingsModalProps
 
   const updateSetting = useCallback((key: string, value: string) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
+    pendingChanges.current[key] = value;
     if (key === "aiEnabled") {
       onAiEnabledChange?.(value === "true");
     }
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      window.sessionCaptureApi.setSetting(key, value).catch(() => {});
+      Object.entries(pendingChanges.current).forEach(([k, v]) => {
+        window.sessionCaptureApi.setSetting(k, v).catch(() => {});
+      });
+      pendingChanges.current = {};
     }, 400);
   }, [onAiEnabledChange]);
 
@@ -115,6 +121,7 @@ export function SettingsModal({ onClose, onAiEnabledChange }: SettingsModalProps
               onUpdate={updateSetting}
               handleError={handleError}
               previewSubdomain={previewSubdomain}
+              onDataCleared={() => { onDataCleared?.(); onClose(); }}
             />
           )}
           {tab === "ai" && (
@@ -131,13 +138,27 @@ function GeneralTab({
   settings,
   onUpdate,
   handleError,
-  previewSubdomain
+  previewSubdomain,
+  onDataCleared
 }: {
   settings: Record<string, string>;
   onUpdate: (key: string, value: string) => void;
   handleError: string | null;
   previewSubdomain: string;
+  onDataCleared: () => void;
 }) {
+  const [confirming, setConfirming] = useState(false);
+
+  async function handleClearAll() {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    await window.sessionCaptureApi.clearAllData();
+    setConfirming(false);
+    onDataCleared();
+  }
+
   return (
     <div className="settings-tab-content">
       <h3 className="settings-tab-title">General</h3>
@@ -174,6 +195,23 @@ function GeneralTab({
           Your share links will be{" "}
           <code className="settings-url-preview">{previewSubdomain}.localhost:1455/...</code>
         </p>
+      </div>
+
+      <div className="danger-zone">
+        <div className="danger-zone-label">Danger Zone</div>
+        <div className="danger-zone-row">
+          <div className="danger-zone-info">
+            <span className="danger-zone-title">Clear all data</span>
+            <span className="danger-zone-desc">Permanently delete all sessions, captures, and drafts.</span>
+          </div>
+          <button
+            className={`danger-zone-btn ${confirming ? "confirming" : ""}`}
+            onClick={handleClearAll}
+            onBlur={() => setConfirming(false)}
+          >
+            {confirming ? "Confirm — this cannot be undone" : "Clear All Data"}
+          </button>
+        </div>
       </div>
     </div>
   );

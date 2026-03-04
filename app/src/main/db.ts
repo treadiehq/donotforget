@@ -26,9 +26,9 @@ function tokenize(input: string): Set<string> {
   return new Set(
     input
       .toLowerCase()
-      .replace(/[^\w\s]/g, " ")
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
       .split(/\s+/)
-      .filter((t) => t.length >= 2)
+      .filter((t) => t.length >= 1)
   );
 }
 
@@ -108,6 +108,15 @@ export class SessionDb {
       return res.changes > 0;
     });
     return tx(sessionId);
+  }
+
+  clearAllData(): void {
+    const tx = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM events").run();
+      this.db.prepare("DELETE FROM sessions").run();
+      this.db.prepare("DELETE FROM session_drafts").run();
+    });
+    tx();
   }
 
   listSessions(): SessionRow[] {

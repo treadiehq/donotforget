@@ -21,16 +21,19 @@ export function SearchPalette({ onClose, onSelect }: SearchPaletteProps) {
   }, []);
 
   useEffect(() => {
+    let active = true;
+
     if (!query.trim()) {
       setResults([]);
       setSearched(false);
-      return;
+      return () => { active = false; };
     }
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
       window.sessionCaptureApi
         .searchSessions(query.trim())
         .then((rows) => {
+          if (!active) return;
           setResults(rows);
           setSearched(true);
           setActiveIndex(0);
@@ -38,6 +41,7 @@ export function SearchPalette({ onClose, onSelect }: SearchPaletteProps) {
         .catch(() => {});
     }, 150);
     return () => {
+      active = false;
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
   }, [query]);

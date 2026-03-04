@@ -36,6 +36,7 @@ const api = {
     ipcRenderer.invoke("ai:chat", message, sessionId) as Promise<string>,
   aiEnhance: (sessionId: number) =>
     ipcRenderer.invoke("ai:enhance", sessionId) as Promise<string>,
+  clearAllData: () => ipcRenderer.invoke("data:clear-all") as Promise<void>,
   getVersion: () => ipcRenderer.invoke("app:get-version") as Promise<string>,
   checkForUpdates: () => ipcRenderer.invoke("app:check-for-updates") as Promise<{
     available: boolean;

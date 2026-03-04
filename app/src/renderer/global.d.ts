@@ -23,6 +23,7 @@ declare global {
       openAccessibilitySettings: () => Promise<void>;
       getSettings: () => Promise<Record<string, string>>;
       setSetting: (key: string, value: string) => Promise<void>;
+      clearAllData: () => Promise<void>;
       aiChat: (message: string, sessionId: number | null) => Promise<string>;
       aiEnhance: (sessionId: number) => Promise<string>;
       getVersion: () => Promise<string>;

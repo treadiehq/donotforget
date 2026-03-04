@@ -97,7 +97,7 @@ function setTrayMenu() {
     {
       label: "Quit",
       click: () => {
-        app.exit(0);
+        app.quit();
       }
     }
   ]);
@@ -488,6 +488,10 @@ async function initIpc() {
     if (key === "handle") {
       shareServer.setHandle(value);
     }
+  });
+  ipcMain.handle("data:clear-all", () => {
+    db.clearAllData();
+    broadcastState();
   });
   ipcMain.handle("ai:chat", async (_event, message: string, sessionId: number | null) => {
     const settings = db.getAllSettings();

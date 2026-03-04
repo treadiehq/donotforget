@@ -2,9 +2,12 @@
 
 A local-first macOS app that captures text from any app into recording sessions. Select text, copy it, and it's saved, no cloud, no sync, just your notes on your machine.
 
+> Your conversations are scattered across apps. Answers are walls of text and you only care about 1–2 lines. Copy-pasting the useful parts is tedious. And good luck finding what you asked where.
+
 ## Features
 
-- **Text capture** — records selected and copied text from any app while a session is active
+- **Capture from anywhere** — select or copy text in any app and it's saved instantly
+- **Session-based** — group captures into named sessions so context stays together
 - **Markdown editor** — edit and organize captured content with a live preview
 - **AI-powered** — optional smart summaries, content enhancement, and session chat (OpenAI, Anthropic, Google)
 - **Share links** — generate local URLs to share sessions from your machine

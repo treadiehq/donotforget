@@ -48,6 +48,7 @@ export function App() {
   const titleSaveTimer = useRef<ReturnType<typeof setTimeout>>();
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
   const moreRef = useRef<HTMLDivElement>(null);
+  const wasRecordingRef = useRef(false);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -92,7 +93,6 @@ export function App() {
   async function refreshSessions() {
     const rows = await window.sessionCaptureApi.listSessions();
     setSessions(rows);
-    if (!selectedSessionId && rows[0]) setSelectedSessionId(rows[0].id);
   }
 
   async function refreshEvents(sessionId: number | null) {
@@ -123,9 +123,11 @@ export function App() {
     }).catch(() => {});
 
     const offState = window.sessionCaptureApi.onStateChanged(async (nextState) => {
+      const justStartedRecording = nextState.recording && !wasRecordingRef.current;
+      wasRecordingRef.current = nextState.recording;
       setState(nextState);
       await refreshSessions();
-      if (nextState.currentSessionId) {
+      if (justStartedRecording && nextState.currentSessionId) {
         setSelectedSessionId(nextState.currentSessionId);
       }
     });
@@ -371,7 +373,7 @@ export function App() {
 
             <section className="detail-view">
               <header className="detail-header">
-                <button className="ghost-btn" onClick={() => setView("list")} data-tooltip="Back to sessions" data-tooltip-pos="bottom-left">
+                <button className="ghost-btn" onClick={() => { setView("list"); setSelectedSessionId(null); }} data-tooltip="Back to sessions" data-tooltip-pos="bottom-left">
                   <ArrowLeftIcon className="icon" />
                 </button>
                 <input
@@ -403,9 +405,6 @@ export function App() {
                   spellCheck={false}
                 />
                 <div className="top-actions">
-                  {state.recording ? (
-                    <div className="pill recording">Recording</div>
-                  ) : null}
                   <button
                     className={editorMode === "preview" ? "action-btn active" : "action-btn"}
                     onClick={() => setEditorMode("preview")}
@@ -424,21 +423,12 @@ export function App() {
                   </button>
                   <div className="action-divider" />
                   <button
-                    className="action-btn"
+                    className={state.recording ? "action-btn recording-btn" : "action-btn"}
                     onClick={onToggleRecording}
                     aria-label={state.recording ? "Stop recording" : "Start recording"}
                     data-tooltip={state.recording ? "Stop recording" : "Start recording"} data-tooltip-pos="bottom"
                   >
                     {state.recording ? <StopIcon className="icon" /> : <PlayIcon className="icon" />}
-                  </button>
-                  <button
-                    className="action-btn"
-                    disabled={!selectedSessionId}
-                    onClick={onCopySession}
-                    aria-label="Copy transcript markdown"
-                    data-tooltip="Copy markdown" data-tooltip-pos="bottom"
-                  >
-                    <ClipboardDocumentIcon className="icon" />
                   </button>
                   <button
                     className="action-btn"
@@ -460,6 +450,9 @@ export function App() {
                     </button>
                     {showMore ? (
                       <div className="more-menu">
+                        <button className="menu-btn" disabled={!selectedSessionId} onClick={onCopySession}>
+                          Copy Markdown
+                        </button>
                         <button className="menu-btn" disabled={!selectedSessionId} onClick={onExportMarkdown}>
                           Export Markdown
                         </button>
@@ -467,13 +460,15 @@ export function App() {
                           Export JSON
                         </button>
                         {!helperConnected ? (
-                          <button className="menu-btn" onClick={onStartHelper}>
-                            Start Helper
-                          </button>
+                          <>
+                            <button className="menu-btn" onClick={onStartHelper}>
+                              Start Helper
+                            </button>
+                            <button className="menu-btn" onClick={() => { window.sessionCaptureApi.openAccessibilitySettings(); setShowMore(false); }}>
+                              Enable Accessibility
+                            </button>
+                          </>
                         ) : null}
-                        <button className="menu-btn" onClick={() => { window.sessionCaptureApi.openAccessibilitySettings(); setShowMore(false); }}>
-                          Enable Accessibility
-                        </button>
                         {selectedSessionId && shareUrl ? (
                           <button className="menu-btn" onClick={onRevokeShare}>
                             Revoke Share
@@ -524,7 +519,7 @@ export function App() {
                 onStartRecording={onToggleRecording}
               />
               {aiEnabled && (
-                <FloatingChat sessionId={selectedSessionId} context="detail" />
+                <FloatingChat key={selectedSessionId} sessionId={selectedSessionId} context="detail" />
               )}
             </section>
           </div>
@@ -558,6 +553,13 @@ export function App() {
             }).catch(() => {});
           }}
           onAiEnabledChange={setAiEnabled}
+          onDataCleared={async () => {
+            setShowSettings(false);
+            setSelectedSessionId(null);
+            setEvents([]);
+            setView("list");
+            await refreshSessions();
+          }}
         />
       )}
     </div>

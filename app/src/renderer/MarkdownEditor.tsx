@@ -87,14 +87,12 @@ export function MarkdownEditor({ events, sessionTitle, mode, recording, sessionI
   // Append new events to content
   useEffect(() => {
     if (!draftLoaded) return;
-    if (events.length > lastEventCount && lastEventCount > 0) {
+    if (events.length > lastEventCount) {
       const newEvents = events.slice(lastEventCount);
       const newMd = eventsToMarkdown(newEvents);
       if (newMd) {
         setContent((prev) => (prev ? prev + "\n\n" + newMd : newMd));
       }
-    } else if (lastEventCount === 0 && events.length > 0 && !content) {
-      setContent(eventsToMarkdown(events));
     }
     setLastEventCount(events.length);
   }, [events, draftLoaded]);
@@ -198,14 +196,16 @@ export function MarkdownEditor({ events, sessionTitle, mode, recording, sessionI
           <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
         </div>
       ) : (
-        <textarea
-          ref={textareaRef}
-          className="md-textarea"
-          value={content}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          spellCheck={false}
-        />
+        <div className="md-textarea-wrap">
+          <textarea
+            ref={textareaRef}
+            className="md-textarea"
+            value={content}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            spellCheck={false}
+          />
+        </div>
       )}
       <div className="md-footer">
         <span>{stats.words} words</span>

@@ -255,7 +255,7 @@ How to respond:
         DATE: `${date} at ${time}`,
         CAPTURES: captureLabel,
         CONTENT: contentHtml,
-        MARKDOWN_JSON: JSON.stringify(markdown),
+        MARKDOWN_JSON: JSON.stringify(markdown).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e"),
         CSS: this.getCss()
       });
 
