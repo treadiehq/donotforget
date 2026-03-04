@@ -1,26 +1,65 @@
 import { useRef, useState, useEffect } from "react";
 import { SparklesIcon } from "@heroicons/react/24/outline";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface FloatingChatProps {
   sessionId: number | null;
   context: "list" | "detail";
+  onDraftApplied?: () => void;
 }
 
-export function FloatingChat({ sessionId, context }: FloatingChatProps) {
+export function FloatingChat({ sessionId, context, onDraftApplied }: FloatingChatProps) {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<
-    { role: "user" | "assistant"; content: string }[]
+    { role: "user" | "assistant"; content: string; isEnhance?: boolean }[]
   >([]);
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [hasKey, setHasKey] = useState<boolean | null>(null);
+  const [chatHeight, setChatHeight] = useState(280);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const dragStartY = useRef(0);
+  const dragStartHeight = useRef(0);
+
+  const onDragStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragging.current = true;
+    dragStartY.current = e.clientY;
+    dragStartHeight.current = chatHeight;
+    document.body.style.cursor = "ns-resize";
+    document.body.style.userSelect = "none";
+    const onMove = (ev: MouseEvent) => {
+      ev.preventDefault();
+      if (!dragging.current) return;
+      const delta = dragStartY.current - ev.clientY;
+      setChatHeight(Math.max(150, Math.min(window.innerHeight * 0.7, dragStartHeight.current + delta)));
+    };
+    const onUp = () => {
+      dragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  const checkSettings = () => {
+    window.sessionCaptureApi.getSettings().then((s) => {
+      setHasKey(!!(s.aiApiKey && s.aiEnabled === "true"));
+    }).catch(() => setHasKey(false));
+  };
 
   useEffect(() => {
-    window.sessionCaptureApi.getSettings().then((s) => {
-      setHasKey(!!s.aiApiKey);
-    }).catch(() => setHasKey(false));
+    checkSettings();
+    // Re-check whenever the window regains focus (e.g. after closing settings)
+    window.addEventListener("focus", checkSettings);
+    return () => window.removeEventListener("focus", checkSettings);
   }, []);
 
   useEffect(() => {
@@ -65,7 +104,7 @@ export function FloatingChat({ sessionId, context }: FloatingChatProps) {
 
     try {
       const result = await window.sessionCaptureApi.aiEnhance(sessionId);
-      setMessages((prev) => [...prev, { role: "assistant", content: result }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: result, isEnhance: true }]);
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -74,6 +113,15 @@ export function FloatingChat({ sessionId, context }: FloatingChatProps) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const applyEnhancement = async (content: string) => {
+    if (!sessionId) return;
+    const enhancedMatch = content.match(/###\s*Enhanced content\s*\n([\s\S]*)/i);
+    const enhanced = enhancedMatch ? enhancedMatch[1].trim() : content;
+    await window.sessionCaptureApi.saveDraft(sessionId, enhanced);
+    setMessages((prev) => [...prev, { role: "assistant", content: "Applied to your session. Switch to preview to see the changes." }]);
+    onDraftApplied?.();
   };
 
   const contextLabel =
@@ -97,10 +145,25 @@ export function FloatingChat({ sessionId, context }: FloatingChatProps) {
   return (
     <div className={`floating-chat ${expanded ? "expanded" : ""}`}>
       {expanded && messages.length > 0 && (
-        <div className="floating-chat-messages" ref={scrollRef}>
+        <>
+        <div className="floating-chat-drag-handle" onMouseDown={onDragStart}>
+          <div className="floating-chat-drag-bar" />
+        </div>
+        <div className="floating-chat-messages" ref={scrollRef} style={{ maxHeight: chatHeight }}>
           {messages.map((msg, i) => (
             <div key={i} className={`floating-chat-msg ${msg.role}`}>
-              <div className="floating-chat-msg-bubble">{msg.content}</div>
+              <div className="floating-chat-msg-bubble">
+                {msg.role === "assistant" ? (
+                  <div className="chat-prose">
+                    <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
+                  </div>
+                ) : msg.content}
+              </div>
+              {msg.isEnhance && (
+                <button className="floating-chat-apply" onClick={() => applyEnhancement(msg.content)}>
+                  Apply to session
+                </button>
+              )}
             </div>
           ))}
           {loading && (
@@ -113,6 +176,7 @@ export function FloatingChat({ sessionId, context }: FloatingChatProps) {
             </div>
           )}
         </div>
+        </>
       )}
       <div className="floating-chat-bar">
         <input

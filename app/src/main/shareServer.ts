@@ -6,8 +6,21 @@ import { app } from "electron";
 import type { SessionDb } from "./db";
 import { sessionToMarkdown } from "./exporters";
 
+const VALID_MODELS: Record<string, string[]> = {
+  openai: ["gpt-5.2", "gpt-5.3-codex", "gpt-4o", "gpt-4o-mini"],
+  anthropic: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+  google: ["gemini-3.1-pro", "gemini-3.1-flash-lite", "gemini-3-flash"]
+};
+const DEFAULT_MODELS: Record<string, string> = {
+  openai: "gpt-5.2",
+  anthropic: "claude-sonnet-4-6",
+  google: "gemini-3.1-pro"
+};
+
 function getModelForProvider(provider: string, model: string): string {
-  return model || (provider === "anthropic" ? "claude-opus-4-6" : provider === "google" ? "gemini-3.1-pro-preview" : "gpt-5.2");
+  const valid = VALID_MODELS[provider] || [];
+  if (model && valid.includes(model)) return model;
+  return DEFAULT_MODELS[provider] || "gpt-5.2";
 }
 
 async function callAiProviderShare(
@@ -17,9 +30,12 @@ async function callAiProviderShare(
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMessage }], max_tokens: 1024 })
+      body: JSON.stringify({ model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMessage }], max_completion_tokens: 1024 })
     });
-    if (!res.ok) throw new Error(`API error (${res.status})`);
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`API error (${res.status}): ${err.slice(0, 200)}`);
+    }
     const data = await res.json();
     return data.choices?.[0]?.message?.content || "No response.";
   } else if (provider === "anthropic") {
@@ -28,7 +44,10 @@ async function callAiProviderShare(
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({ model, system: systemPrompt, messages: [{ role: "user", content: userMessage }], max_tokens: 1024 })
     });
-    if (!res.ok) throw new Error(`API error (${res.status})`);
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`API error (${res.status}): ${err.slice(0, 200)}`);
+    }
     const data = await res.json();
     return data.content?.[0]?.text || "No response.";
   } else if (provider === "google") {
@@ -37,7 +56,10 @@ async function callAiProviderShare(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ systemInstruction: { parts: [{ text: systemPrompt }] }, contents: [{ role: "user", parts: [{ text: userMessage }] }], generationConfig: { maxOutputTokens: 1024 } })
     });
-    if (!res.ok) throw new Error(`API error (${res.status})`);
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`API error (${res.status}): ${err.slice(0, 200)}`);
+    }
     const data = await res.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text || "No response.";
   }

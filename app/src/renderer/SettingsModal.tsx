@@ -17,9 +17,22 @@ const AI_PROVIDERS = [
 ];
 
 const AI_MODELS: Record<string, { value: string; label: string }[]> = {
-  openai: [{ value: "gpt-5.2", label: "GPT-5.2" }],
-  anthropic: [{ value: "claude-opus-4-6", label: "Claude Opus 4.6" }],
-  google: [{ value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" }]
+  openai: [
+    { value: "gpt-5.2", label: "GPT-5.2" },
+    { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+    { value: "gpt-4o", label: "GPT-4o" },
+    { value: "gpt-4o-mini", label: "GPT-4o mini" }
+  ],
+  anthropic: [
+    { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+    { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" }
+  ],
+  google: [
+    { value: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+    { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite" },
+    { value: "gemini-3-flash", label: "Gemini 3 Flash" }
+  ]
 };
 
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/;

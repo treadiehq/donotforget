@@ -43,6 +43,8 @@ export function App() {
   const [userHandle, setUserHandle] = useState("");
   const [userName, setUserName] = useState("");
   const [aiEnabled, setAiEnabled] = useState(false);
+  const [settingsVersion, setSettingsVersion] = useState(0);
+  const [draftVersion, setDraftVersion] = useState(0);
   const [updateAvailable, setUpdateAvailable] = useState<{ version: string; url: string } | null>(null);
   const titleFocused = useRef(false);
   const titleSaveTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -367,7 +369,7 @@ export function App() {
                 </div>
               )}
               {aiEnabled && (
-                <FloatingChat sessionId={null} context="list" />
+                <FloatingChat key={`list-${settingsVersion}`} sessionId={null} context="list" />
               )}
             </section>
 
@@ -517,9 +519,15 @@ export function App() {
                 recording={state.recording}
                 sessionId={selectedSessionId}
                 onStartRecording={onToggleRecording}
+                draftVersion={draftVersion}
               />
               {aiEnabled && (
-                <FloatingChat key={selectedSessionId} sessionId={selectedSessionId} context="detail" />
+                <FloatingChat
+                  key={`${selectedSessionId}-${settingsVersion}`}
+                  sessionId={selectedSessionId}
+                  context="detail"
+                  onDraftApplied={() => setDraftVersion((v) => v + 1)}
+                />
               )}
             </section>
           </div>
@@ -546,6 +554,7 @@ export function App() {
         <SettingsModal
           onClose={() => {
             setShowSettings(false);
+            setSettingsVersion((v) => v + 1);
             window.sessionCaptureApi.getSettings().then((s) => {
               setUserHandle(s.handle || "");
               setUserName(s.name || "");

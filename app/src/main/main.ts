@@ -21,6 +21,7 @@ let db!: SessionDb;
 let shareServer!: ShareServer;
 const helperSockets = new Set<WebSocket>();
 let captureWss: WebSocketServer | null = null;
+const autoTitledSessions = new Set<number>();
 
 function getState(): AppState {
   return {
@@ -150,7 +151,8 @@ async function callAiProvider(
   model: string,
   apiKey: string,
   systemPrompt: string,
-  userMessage: string
+  userMessage: string,
+  maxTokens: number = 2048
 ): Promise<string> {
   if (provider === "openai") {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -162,7 +164,7 @@ async function callAiProvider(
           { role: "system", content: systemPrompt },
           { role: "user", content: userMessage }
         ],
-        max_tokens: 1024
+        max_completion_tokens: maxTokens
       })
     });
     if (!res.ok) {
@@ -183,7 +185,7 @@ async function callAiProvider(
         model,
         system: systemPrompt,
         messages: [{ role: "user", content: userMessage }],
-        max_tokens: 1024
+        max_tokens: maxTokens
       })
     });
     if (!res.ok) {
@@ -201,7 +203,7 @@ async function callAiProvider(
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: "user", parts: [{ text: userMessage }] }],
-          generationConfig: { maxOutputTokens: 1024 }
+          generationConfig: { maxOutputTokens: maxTokens }
         })
       }
     );
@@ -215,8 +217,21 @@ async function callAiProvider(
   throw new Error("Unsupported provider.");
 }
 
+const VALID_MODELS: Record<string, string[]> = {
+  openai: ["gpt-5.2", "gpt-5.3-codex", "gpt-4o", "gpt-4o-mini"],
+  anthropic: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+  google: ["gemini-3.1-pro", "gemini-3.1-flash-lite", "gemini-3-flash"]
+};
+const DEFAULT_MODELS: Record<string, string> = {
+  openai: "gpt-5.2",
+  anthropic: "claude-sonnet-4-6",
+  google: "gemini-3.1-pro"
+};
+
 function getModelForProvider(provider: string, model: string): string {
-  return model || (provider === "anthropic" ? "claude-opus-4-6" : provider === "google" ? "gemini-3.1-pro-preview" : "gpt-5.2");
+  const valid = VALID_MODELS[provider] || [];
+  if (model && valid.includes(model)) return model;
+  return DEFAULT_MODELS[provider] || "gpt-5.2";
 }
 
 function buildRichEventContext(events: Array<{ ts: number; app: string; window: string | null; source: string; text: string }>): string {
@@ -280,6 +295,44 @@ Rules:
     broadcastState();
   } catch {
     // Silently fail
+  }
+}
+
+async function generateAutoTitle(sessionId: number) {
+  if (autoTitledSessions.has(sessionId)) return;
+  const settings = db.getAllSettings();
+  if (settings.aiEnabled !== "true") return;
+  const apiKey = settings.aiApiKey;
+  if (!apiKey) return;
+
+  const session = db.getSession(sessionId);
+  if (!session) return;
+  if (!session.title.startsWith("Session ")) return;
+
+  const events = db.getEvents(sessionId);
+  if (events.length < 3) return;
+
+  autoTitledSessions.add(sessionId);
+
+  const provider = settings.aiProvider || "openai";
+  const model = getModelForProvider(provider, settings.aiModel || "");
+  const apps = [...new Set(events.map((e) => e.app))];
+  const snippet = events.slice(0, 8).map((e) => e.text.slice(0, 200)).join("\n");
+
+  const systemPrompt = `Generate a short, descriptive title (3-7 words) for a note-taking session. The title should capture the main topic or activity. Return ONLY the title text — no quotes, no punctuation at the end, no explanation.`;
+
+  try {
+    const title = await callAiProvider(provider, model, apiKey, systemPrompt,
+      `Apps used: ${apps.join(", ")}\n\nCaptured text:\n${snippet.slice(0, 2000)}`,
+      64
+    );
+    const cleaned = title.replace(/^["']|["']$/g, "").replace(/\.+$/, "").trim();
+    if (cleaned && cleaned.length > 1 && cleaned.length < 80) {
+      db.renameSession(sessionId, cleaned);
+      broadcastState();
+    }
+  } catch {
+    autoTitledSessions.delete(sessionId);
   }
 }
 
@@ -378,6 +431,7 @@ function startCaptureSocketServer() {
       if (isOwnUiCapture) return;
       db.insertCapture(currentSessionId, normalizedPayload);
       broadcastState();
+      generateAutoTitle(currentSessionId).catch(() => {});
     });
   });
 }
@@ -515,41 +569,40 @@ async function initIpc() {
 
       context = `Session: "${session?.title || "Untitled"}" (${new Date(session?.createdAt || 0).toLocaleDateString()})\nCaptured from: ${apps.join(", ")}\nCaptures: ${events.length}\n\n${content}`;
 
-      systemPrompt = `You are embedded inside a note-taking app called "Do Not Forget." The user is looking at a specific session and asking you about it.
+      systemPrompt = `You are a smart assistant inside a note-taking app. The user captured text from various apps into a session. You have the full session content below — use it to answer their question.
 
-Here is the full session content:
+<session title="${session?.title || "Untitled"}" date="${new Date(session?.createdAt || 0).toLocaleDateString()}" captures="${events.length}" apps="${apps.join(", ")}">
+${content.slice(0, 12000)}
+</session>
 
-${context}
-
-How to respond:
-- Answer like a knowledgeable friend who has read everything in this session carefully
-- Be direct. Get to the point. No filler phrases like "Based on the content" or "According to the session"
-- If they ask "what was that thing about X" — find it and quote the relevant part
-- If they ask for a specific detail (a name, URL, number, date) — give it precisely
-- If something isn't in the session, say "I don't see that in this session" — don't guess
-- Keep answers short unless they ask for detail. One good sentence beats three mediocre ones
-- Use markdown formatting when it helps readability (code blocks for code, bold for emphasis)
-- Match their energy — casual question gets a casual answer, technical question gets a precise answer`;
+Rules:
+- NEVER just list or repeat the raw captured text back. The user can already see it.
+- THINK about what they're asking and give a genuinely useful, synthesized answer.
+- If they ask "what's in here" — summarize the key themes and highlights, don't dump everything.
+- If they ask about a specific detail — give a clear, direct answer with just the relevant info.
+- Be conversational and concise. Write like a smart colleague, not a search engine.
+- Use markdown: bold for emphasis, bullet points for lists, code blocks for code.
+- If it's not in the session, say so. Don't make things up.`;
     } else {
       context = db.getAllSessionsContext();
       if (!context) context = "(No sessions yet)";
       const sessionCount = db.listSessions().length;
 
-      systemPrompt = `You are embedded inside a note-taking app called "Do Not Forget." The user is on their main session list and has ${sessionCount} sessions. They can ask you anything about any of their captured content.
+      systemPrompt = `You are a smart assistant inside a note-taking app. The user has ${sessionCount} sessions of captured text from various apps. All session content is below — use it to answer their question.
 
-Here are all their sessions:
+<sessions>
+${context.slice(0, 15000)}
+</sessions>
 
-${context}
-
-How to respond:
-- You are like a personal search engine over their captured notes. Find exactly what they need.
-- When you find the answer, mention which session it's from (by title) so they can navigate to it
-- Connect the dots — if related info appears across multiple sessions, link them together
-- Be specific: quote key details, don't paraphrase into vagueness
-- If they ask something broad like "what did I capture about X", give a concise overview across all relevant sessions
-- If nothing matches, say "I couldn't find anything about that in your sessions" — don't make things up
-- Keep responses tight. Bullet points are great for multi-session answers
-- You're searching through real captured text — it may be messy, fragmented, or informal. Read through the noise to find signal`;
+Rules:
+- NEVER just list or repeat raw captured text. The user can already see their sessions.
+- THINK about their question and give a genuinely useful, synthesized answer.
+- When referencing info, mention which session it's from (by title) so they can find it.
+- Connect dots across sessions if relevant info appears in multiple places.
+- If they ask something broad — give a concise summary of the key points, not a dump.
+- Be conversational. Write like a smart colleague who has read all their notes.
+- Use markdown: bold for key info, bullet points for lists, keep it scannable.
+- If nothing matches their question, say so honestly. Don't make things up.`;
     }
 
     try {
@@ -604,7 +657,8 @@ Format your response as:
 
     try {
       return await callAiProvider(provider, model, apiKey, systemPrompt,
-        `Session: "${session?.title || "Untitled"}"\nCaptured from: ${apps.join(", ")}\n\nRaw content:\n${content.slice(0, 12000)}`
+        `Session: "${session?.title || "Untitled"}"\nCaptured from: ${apps.join(", ")}\n\nRaw content:\n${content.slice(0, 12000)}`,
+        4096
       );
     } catch (err: any) {
       return `Request failed: ${err.message || err}`;

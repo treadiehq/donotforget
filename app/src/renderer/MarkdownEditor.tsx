@@ -41,9 +41,10 @@ interface MarkdownEditorProps {
   recording: boolean;
   sessionId: number | null;
   onStartRecording: () => void;
+  draftVersion?: number;
 }
 
-export function MarkdownEditor({ events, sessionTitle, mode, recording, sessionId, onStartRecording }: MarkdownEditorProps) {
+export function MarkdownEditor({ events, sessionTitle, mode, recording, sessionId, onStartRecording, draftVersion = 0 }: MarkdownEditorProps) {
   const [content, setContent] = useState("");
   const [lastEventCount, setLastEventCount] = useState(0);
   const [draftLoaded, setDraftLoaded] = useState(false);
@@ -83,6 +84,14 @@ export function MarkdownEditor({ events, sessionTitle, mode, recording, sessionI
       setDraftLoaded(true);
     });
   }, [sessionId]);
+
+  // Reload draft when externally applied (e.g. from Enhance)
+  useEffect(() => {
+    if (!sessionId || draftVersion === 0) return;
+    window.sessionCaptureApi.getDraft(sessionId).then((draft) => {
+      if (draft !== null) setContent(draft);
+    }).catch(() => {});
+  }, [draftVersion]);
 
   // Append new events to content
   useEffect(() => {
