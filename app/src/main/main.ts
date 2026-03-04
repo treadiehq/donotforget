@@ -646,8 +646,8 @@ Format your response as:
         available: isNewer,
         currentVersion: current,
         latestVersion: latest,
-        releaseUrl: data.download || `https://github.com/treadiehq/donotforget/releases/tag/v${latest}`,
-        downloadUrl: data.download || null
+        releaseUrl: data.url || `https://github.com/treadiehq/donotforget/releases/tag/v${latest}`,
+        downloadUrl: data.downloadUrl || data.url || null
       };
     } catch (err: any) {
       return { available: false, error: err.message || "Network error" };

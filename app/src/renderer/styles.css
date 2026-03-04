@@ -1424,8 +1424,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-weight: 500;
   font-family: inherit;
   color: #e2e8f0;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  @apply bg-gray-500/10;
+  @apply border border-gray-500/10;
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -1888,10 +1888,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 .about-update-available {
-  background: rgba(59, 130, 246, 0.12) !important;
-  border-color: rgba(59, 130, 246, 0.25) !important;
-  color: #60a5fa !important;
+  @apply bg-blue-300/10;
+  @apply border border-blue-300/10;
+  @apply text-blue-300;
 }
 .about-update-available:hover {
-  background: rgba(59, 130, 246, 0.2) !important;
+  @apply bg-blue-300/20;
 }
