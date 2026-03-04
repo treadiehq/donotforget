@@ -353,7 +353,10 @@ function AboutTab() {
     setUpdateStatus("checking");
     try {
       const result = await window.sessionCaptureApi.checkForUpdates();
-      if (result.available) {
+      if (result.error) {
+        console.error("Update check error:", result.error);
+        setUpdateStatus("error");
+      } else if (result.available) {
         setUpdateStatus("available");
         setUpdateInfo({
           latestVersion: result.latestVersion,
