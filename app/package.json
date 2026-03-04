@@ -1,0 +1,88 @@
+{
+  "name": "do-not-forget",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main/main/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"bun run dev:renderer\" \"bun run dev:main\" \"bun run dev:share-css\" \"bun run dev:electron\"",
+    "dev:share-css": "tailwindcss -i ./src/share/share.input.css -o ./src/share/share.generated.css --watch",
+    "dev:renderer": "vite",
+    "dev:main": "tsc -p tsconfig.main.json --watch",
+    "dev:electron": "wait-on tcp:5173 file:dist/main/main/main.js && env -u ELECTRON_RUN_AS_NODE cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron ./dist/main/main/main.js",
+    "build": "bun run build:renderer && bun run build:share-css && bun run build:main",
+    "build:renderer": "vite build",
+    "build:share-css": "tailwindcss -i ./src/share/share.input.css -o ./src/share/share.generated.css --minify",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:helper": "cd ../native-helper && swift build -c release && mkdir -p ../app/build/helper && cp .build/release/SessionCaptureHelper ../app/build/helper/",
+    "package": "bun run build && bun run build:helper && electron-builder --mac",
+    "start": "env -u ELECTRON_RUN_AS_NODE electron ./dist/main/main/main.js",
+    "rebuild:native": "env -u ELECTRON_RUN_AS_NODE electron-rebuild -f -w better-sqlite3"
+  },
+  "build": {
+    "appId": "com.donotforget.app",
+    "productName": "Do Not Forget",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "src/share",
+        "to": "share",
+        "filter": ["share.template.html", "share.404.html", "share.generated.css"]
+      },
+      {
+        "from": "build/helper",
+        "to": "helper",
+        "filter": ["SessionCaptureHelper"]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": "dmg",
+      "identity": null,
+      "icon": "build/icon.png"
+    },
+    "dmg": {
+      "title": "Do Not Forget",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
+    }
+  },
+  "dependencies": {
+    "@heroicons/react": "^2.2.0",
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.1",
+    "@tailwindcss/cli": "^4.2.1",
+    "@tailwindcss/vite": "^4.2.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.10",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/ws": "^8.5.14",
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^35.0.0",
+    "electron-builder": "^26.8.1",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.0",
+    "wait-on": "^8.0.3"
+  }
+}

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{TITLE}} — Do Not Forget</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 296 296'%3E%3Cpath d='M148 296C82.32 296 26.63 253.22 7.29 194h126.71c7.73 0 14-6.27 14-14s-6.27-14-14-14H1.09C.37 160.1 0 154.09 0 148s.37-6.1 1.09-12H134c7.73 0 14-6.27 14-14s-6.27-14-14-14H7.29C26.64 42.78 82.32 0 148 0c81.74 0 148 66.26 148 148s-66.26 148-148 148Z' fill='%23ffffff'/%3E%3C/svg%3E" />
+    <style>{{CSS}}</style>
+  </head>
+  <body class="min-h-screen bg-[#06060b] text-[#c8cdd8] antialiased font-sans leading-relaxed">
+
+    <!-- Nav -->
+    <nav class="sticky top-0 z-10 border-b border-white/[0.04] bg-[#06060b]/85 backdrop-blur-xl">
+      <div class="mx-auto flex max-w-[800px] items-center justify-between px-8 py-3.5">
+        <span class="text-sm font-semibold flex items-center gap-1 tracking-tight text-[#e0e4f0]">
+          <span>Powered by </span>
+          <a href="https://donotforget.app" class="inline-flex items-center gap-1 text-blue-300 no-underline hover:text-blue-400">
+            <svg width="14" height="14" viewBox="0 0 296 296" fill="none">
+              <path d="M148 296C82.32 296 26.63 253.22 7.29 194h126.71c7.73 0 14-6.27 14-14s-6.27-14-14-14H1.09C.37 160.1 0 154.09 0 148s.37-6.1 1.09-12H134c7.73 0 14-6.27 14-14s-6.27-14-14-14H7.29C26.64 42.78 82.32 0 148 0c81.74 0 148 66.26 148 148s-66.26 148-148 148Z" fill="currentColor"/>
+            </svg>
+            <span>Do Not Forget</span>
+          </a>
+        </span>
+      </div>
+    </nav>
+
+    <!-- Error -->
+    <main class="flex min-h-[calc(100vh-200px)] flex-col items-center justify-center px-8 text-center">
+      <div class="mb-7 rounded-full border border-blue-300/15 bg-blue-300/[0.08] px-4 py-1 text-[0.7rem] font-semibold uppercase tracking-widest text-blue-300">
+        404
+      </div>
+      <h2 class="mb-2.5 text-xl font-semibold tracking-tight text-[#d0d5e2]">{{TITLE}}</h2>
+      <p class="mx-auto max-w-[360px] text-sm leading-relaxed text-gray-500">{{MESSAGE}}</p>
+      <a
+        href="/"
+        class="mt-8 inline-flex items-center gap-1.5 rounded-[10px] border border-white/[0.06] bg-white/[0.03] px-4 py-2 text-xs font-medium text-blue-300 no-underline transition-all duration-200 hover:border-blue-300/15 hover:bg-blue-300/[0.06] hover:text-blue-400"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="19" y1="12" x2="5" y2="12" />
+          <polyline points="12 19 5 12 12 5" />
+        </svg>
+        Go back
+      </a>
+    </main>
+  </body>
+</html>

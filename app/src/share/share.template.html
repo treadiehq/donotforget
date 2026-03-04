@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{TITLE}} — Do Not Forget</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 296 296'%3E%3Cpath d='M148 296C82.32 296 26.63 253.22 7.29 194h126.71c7.73 0 14-6.27 14-14s-6.27-14-14-14H1.09C.37 160.1 0 154.09 0 148s.37-6.1 1.09-12H134c7.73 0 14-6.27 14-14s-6.27-14-14-14H7.29C26.64 42.78 82.32 0 148 0c81.74 0 148 66.26 148 148s-66.26 148-148 148Z' fill='%23ffffff'/%3E%3C/svg%3E" />
+    <style>{{CSS}}</style>
+  </head>
+  <body class="min-h-screen bg-[#06060b] text-[#c8cdd8] antialiased font-sans leading-relaxed">
+
+    <!-- Nav -->
+    <nav class="sticky top-0 z-10 border-b border-white/[0.04] bg-[#06060b]/85 backdrop-blur-xl">
+      <div class="mx-auto flex max-w-[800px] items-center justify-between px-8 py-3.5">
+        <span class="text-sm font-semibold flex items-center gap-1 tracking-tight text-[#e0e4f0]">
+          <span>Powered by </span>
+          <a href="https://donotforget.app" class="inline-flex items-center gap-1 text-blue-300 no-underline hover:text-blue-400">
+            <svg width="14" height="14" viewBox="0 0 296 296" fill="none">
+              <path d="M148 296C82.32 296 26.63 253.22 7.29 194h126.71c7.73 0 14-6.27 14-14s-6.27-14-14-14H1.09C.37 160.1 0 154.09 0 148s.37-6.1 1.09-12H134c7.73 0 14-6.27 14-14s-6.27-14-14-14H7.29C26.64 42.78 82.32 0 148 0c81.74 0 148 66.26 148 148s-66.26 148-148 148Z" fill="currentColor"/>
+            </svg>
+            <span>Do Not Forget</span>
+          </a>
+        </span>
+        <span class="text-[0.72rem] text-gray-500">{{CAPTURES}}</span>
+      </div>
+    </nav>
+
+    <!-- Main -->
+    <main class="mx-auto max-w-[800px] px-8 pb-20 pt-10">
+
+      <!-- Card wrapper (border effect) -->
+      <div class="rounded-[18px] bg-white/[0.06] p-px">
+        <div class="overflow-hidden rounded-[17px] bg-[#0a0b12]/95">
+
+          <!-- Header -->
+          <div class="flex items-center justify-between gap-4 border-b border-white/[0.05] px-8 py-5">
+            <div>
+              <h1 class="m-0 text-xl font-semibold leading-tight tracking-tight text-[#e8ecf4]">{{TITLE}}</h1>
+              <div class="mt-1 flex gap-4 text-xs text-gray-500">
+                <span>{{DATE}}</span>
+                <span class="text-xs text-gray-500">·</span>
+                <span>{{CAPTURES}}</span>
+              </div>
+            </div>
+            <button
+              id="copy"
+              class="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-[10px] border border-white/[0.07] bg-white/[0.04] px-4 py-2 text-xs font-medium text-gray-500 transition-all duration-200 hover:border-white/[0.12] hover:bg-white/[0.08] hover:text-[#c0c5d8]"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+              <span id="copy-label">Copy</span>
+            </button>
+          </div>
+
+          <!-- Content -->
+          <div class="share-content px-8 pb-8 pt-6">
+            {{CONTENT}}
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <!-- <div class="pt-10 pb-4 text-center text-xs tracking-wide text-gray-500">
+        Powered by <a href="#" class="inline-flex items-center gap-1.5 text-blue-300 no-underline hover:text-blue-400"><svg width="14" height="14" viewBox="0 0 296 296" fill="none"><path d="M148 296C82.32 296 26.63 253.22 7.29 194h126.71c7.73 0 14-6.27 14-14s-6.27-14-14-14H1.09C.37 160.1 0 154.09 0 148s.37-6.1 1.09-12H134c7.73 0 14-6.27 14-14s-6.27-14-14-14H7.29C26.64 42.78 82.32 0 148 0c81.74 0 148 66.26 148 148s-66.26 148-148 148Z" fill="currentColor"/></svg>Do Not Forget</a>
+      </div> -->
+    </main>
+
+    <!-- Toast -->
+    <div id="toast" class="fixed bottom-6 left-1/2 hidden -translate-x-1/2 rounded-[10px] border border-emerald-400/20 bg-emerald-400/10 px-6 py-2 text-[0.8rem] font-medium text-emerald-400 animate-fade-in">
+      Copied to clipboard
+    </div>
+
+    <!-- AI Chat -->
+    <div id="ai-chat" class="hidden fixed bottom-5 left-1/2 -translate-x-1/2 w-full max-w-[560px] px-4 z-50">
+      <div id="ai-messages" class="hidden mb-2 max-h-[280px] overflow-y-auto rounded-2xl border border-white/[0.06] bg-[#0a0b12] p-4 space-y-3"></div>
+      <div id="ai-bar" class="flex items-center gap-2 rounded-2xl border border-white/[0.06] bg-[#0a0b12] px-4 py-2.5 shadow-2xl">
+        <input id="ai-input" type="text" placeholder="Ask about this session..." class="flex-1 bg-transparent border-none outline-none text-sm text-[#e2e8f0] placeholder-[#3a3f52] font-sans" />
+        <button id="ai-send" class="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center cursor-pointer border-none transition-all duration-150 hover:bg-blue-500/20 disabled:opacity-30 disabled:cursor-default" disabled>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+        </button>
+      </div>
+      <!-- No key state -->
+      <div id="ai-nokey" class="hidden flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-[#0a0b12] px-4 py-3 shadow-2xl">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4a4f63" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+        <span class="text-xs text-[#4a4f63]">AI chat requires an API key in the app settings</span>
+      </div>
+    </div>
+
+    <script>
+      const markdown = {{MARKDOWN_JSON}};
+      const shareToken = location.pathname.replace(/^\//, "");
+      const btn = document.getElementById("copy");
+      const label = document.getElementById("copy-label");
+      const toast = document.getElementById("toast");
+      btn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(markdown);
+          btn.classList.add("border-emerald-400/30", "text-emerald-400", "bg-emerald-400/[0.06]");
+          label.textContent = "Copied";
+          toast.classList.remove("hidden");
+          setTimeout(() => {
+            toast.classList.add("hidden");
+            btn.classList.remove("border-emerald-400/30", "text-emerald-400", "bg-emerald-400/[0.06]");
+            label.textContent = "Copy";
+          }, 2000);
+        } catch {
+          alert("Clipboard unavailable");
+        }
+      });
+
+      // AI Chat
+      (async () => {
+        const chatWrap = document.getElementById("ai-chat");
+        const bar = document.getElementById("ai-bar");
+        const nokey = document.getElementById("ai-nokey");
+        const input = document.getElementById("ai-input");
+        const sendBtn = document.getElementById("ai-send");
+        const msgBox = document.getElementById("ai-messages");
+        let loading = false;
+
+        try {
+          const res = await fetch("/api/ai-status");
+          const { enabled } = await res.json();
+          chatWrap.classList.remove("hidden");
+          if (!enabled) {
+            bar.classList.add("hidden");
+            nokey.classList.remove("hidden");
+            nokey.classList.add("flex");
+            return;
+          }
+        } catch { return; }
+
+        input.addEventListener("input", () => {
+          sendBtn.disabled = !input.value.trim() || loading;
+        });
+
+        function addMsg(role, text) {
+          msgBox.classList.remove("hidden");
+          const div = document.createElement("div");
+          div.className = "flex " + (role === "user" ? "justify-end" : "justify-start");
+          const bubble = document.createElement("div");
+          bubble.className = "max-w-[85%] px-3.5 py-2 rounded-xl text-xs leading-relaxed whitespace-pre-wrap break-words " +
+            (role === "user"
+              ? "bg-blue-500/15 text-blue-300 rounded-br-sm"
+              : "bg-white/[0.04] text-[#b8bfd0] rounded-bl-sm");
+          bubble.textContent = text;
+          div.appendChild(bubble);
+          msgBox.appendChild(div);
+          msgBox.scrollTop = msgBox.scrollHeight;
+        }
+
+        function showTyping() {
+          msgBox.classList.remove("hidden");
+          const div = document.createElement("div");
+          div.className = "flex justify-start";
+          div.id = "ai-typing";
+          div.innerHTML = '<div class="bg-white/[0.04] text-[#4a4f63] px-3.5 py-2 rounded-xl rounded-bl-sm text-xs">...</div>';
+          msgBox.appendChild(div);
+          msgBox.scrollTop = msgBox.scrollHeight;
+        }
+
+        async function send() {
+          const text = input.value.trim();
+          if (!text || loading) return;
+          loading = true;
+          sendBtn.disabled = true;
+          input.value = "";
+          addMsg("user", text);
+          showTyping();
+          try {
+            const res = await fetch("/api/ai-chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ message: text, token: shareToken })
+            });
+            const typing = document.getElementById("ai-typing");
+            if (typing) typing.remove();
+            if (res.ok) {
+              const { reply } = await res.json();
+              addMsg("assistant", reply);
+            } else {
+              addMsg("assistant", "Something went wrong. Try again.");
+            }
+          } catch {
+            const typing = document.getElementById("ai-typing");
+            if (typing) typing.remove();
+            addMsg("assistant", "Could not reach the server.");
+          }
+          loading = false;
+          sendBtn.disabled = !input.value.trim();
+        }
+
+        sendBtn.addEventListener("click", send);
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+        });
+      })();
+    </script>
+  </body>
+</html>
