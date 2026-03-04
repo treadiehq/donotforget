@@ -607,7 +607,19 @@ Format your response as:
     }
   });
 
-  ipcMain.handle("app:get-version", () => app.getVersion());
+  ipcMain.handle("app:get-version", () => {
+    const candidates = [
+      path.join(__dirname, "../../../package.json"),
+      path.join(app.getAppPath(), "package.json")
+    ];
+    for (const p of candidates) {
+      try {
+        const pkg = JSON.parse(require("fs").readFileSync(p, "utf-8"));
+        if (pkg.version && !pkg.version.startsWith("35.")) return pkg.version;
+      } catch {}
+    }
+    return app.getVersion();
+  });
 
   ipcMain.handle("app:check-for-updates", async () => {
     try {
@@ -617,7 +629,13 @@ Format your response as:
       if (!res.ok) return { available: false, error: `GitHub API error (${res.status})` };
       const data = await res.json();
       const latest = (data.tag_name || "").replace(/^v/, "");
-      const current = app.getVersion();
+      let current = app.getVersion();
+      for (const p of [path.join(__dirname, "../../../package.json"), path.join(app.getAppPath(), "package.json")]) {
+        try {
+          const v = JSON.parse(require("fs").readFileSync(p, "utf-8")).version;
+          if (v && !v.startsWith("35.")) { current = v; break; }
+        } catch {}
+      }
       if (!latest) return { available: false };
       const isNewer = latest.localeCompare(current, undefined, { numeric: true, sensitivity: "base" }) > 0;
       const dmgAsset = data.assets?.find((a: any) => a.name?.endsWith(".dmg"));
