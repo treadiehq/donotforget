@@ -2,6 +2,11 @@
 
 * { box-sizing: border-box; }
 
+::selection {
+  @apply bg-gray-500/20;
+  color: #ffffff;
+}
+
 html, body {
   margin: 0;
   width: 100%;

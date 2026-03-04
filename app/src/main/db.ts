@@ -91,6 +91,11 @@ export class SessionDb {
         value TEXT NOT NULL
       );
     `);
+
+    const cols = this.db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "shareUrl")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN shareUrl TEXT");
+    }
   }
 
   createSession(title?: string): number {
@@ -122,7 +127,7 @@ export class SessionDb {
   listSessions(): SessionRow[] {
     return this.db
       .prepare(
-        `SELECT s.id, s.createdAt, s.title, s.isShared, s.shareToken,
+        `SELECT s.id, s.createdAt, s.title, s.isShared, s.shareToken, s.shareUrl,
                 (SELECT substr(trim(e.text), 1, 120) FROM events e WHERE e.sessionId = s.id AND trim(e.text) != '' ORDER BY e.ts ASC LIMIT 1) as preview
          FROM sessions s ORDER BY s.createdAt DESC`
       )
@@ -138,7 +143,7 @@ export class SessionDb {
 
   getSession(sessionId: number): SessionRow | null {
     const row = this.db
-      .prepare("SELECT id, createdAt, title, isShared, shareToken FROM sessions WHERE id = ?")
+      .prepare("SELECT id, createdAt, title, isShared, shareToken, shareUrl FROM sessions WHERE id = ?")
       .get(sessionId) as SessionRow | undefined;
     return row ?? null;
   }
@@ -149,16 +154,29 @@ export class SessionDb {
       .all(sessionId) as EventRow[];
   }
 
-  setShareToken(sessionId: number, token: string | null) {
+  setShareToken(sessionId: number, token: string | null, shareUrl?: string | null) {
     if (token) {
       this.db
-        .prepare("UPDATE sessions SET isShared = 1, shareToken = ? WHERE id = ?")
-        .run(token, sessionId);
+        .prepare("UPDATE sessions SET isShared = 1, shareToken = ?, shareUrl = ? WHERE id = ?")
+        .run(token, shareUrl ?? null, sessionId);
     } else {
       this.db
-        .prepare("UPDATE sessions SET isShared = 0, shareToken = NULL WHERE id = ?")
+        .prepare("UPDATE sessions SET isShared = 0, shareToken = NULL, shareUrl = NULL WHERE id = ?")
         .run(sessionId);
     }
+  }
+
+  updateAllShareUrls(baseUrl: string): void {
+    const shared = this.db
+      .prepare("SELECT id, shareToken FROM sessions WHERE isShared = 1 AND shareToken IS NOT NULL")
+      .all() as Array<{ id: number; shareToken: string }>;
+    const stmt = this.db.prepare("UPDATE sessions SET shareUrl = ? WHERE id = ?");
+    const tx = this.db.transaction(() => {
+      for (const s of shared) {
+        stmt.run(`${baseUrl}/${s.shareToken}`, s.id);
+      }
+    });
+    tx();
   }
 
   saveDraft(sessionId: number, content: string): void {
@@ -186,7 +204,7 @@ export class SessionDb {
   getSessionByToken(token: string): SessionRow | null {
     const row = this.db
       .prepare(
-        "SELECT id, createdAt, title, isShared, shareToken FROM sessions WHERE shareToken = ? AND isShared = 1"
+        "SELECT id, createdAt, title, isShared, shareToken, shareUrl FROM sessions WHERE shareToken = ? AND isShared = 1"
       )
       .get(token) as SessionRow | undefined;
     return row ?? null;
@@ -308,7 +326,7 @@ export class SessionDb {
     const like = `%${query}%`;
     return this.db
       .prepare(
-        `SELECT DISTINCT s.id, s.createdAt, s.title, s.isShared, s.shareToken,
+        `SELECT DISTINCT s.id, s.createdAt, s.title, s.isShared, s.shareToken, s.shareUrl,
                 (SELECT substr(trim(e.text), 1, 120) FROM events e WHERE e.sessionId = s.id AND trim(e.text) != '' ORDER BY e.ts ASC LIMIT 1) as preview
          FROM sessions s
          LEFT JOIN events e ON e.sessionId = s.id

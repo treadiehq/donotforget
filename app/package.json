@@ -1,6 +1,6 @@
 {
   "name": "do-not-forget",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "main": "dist/main/main/main.js",
   "scripts": {
@@ -50,15 +50,25 @@
     "dmg": {
       "title": "Do Not Forget",
       "contents": [
-        { "x": 130, "y": 220 },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     }
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
     "better-sqlite3": "^11.8.1",
+    "cloudflared": "^0.7.1",
     "express": "^4.21.2",
+    "private-connect": "^0.6.17",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
@@ -84,5 +94,8 @@
     "typescript": "^5.8.2",
     "vite": "^6.2.0",
     "wait-on": "^8.0.3"
-  }
+  },
+  "trustedDependencies": [
+    "cloudflared"
+  ]
 }

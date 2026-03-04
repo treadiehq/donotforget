@@ -146,17 +146,15 @@ export function App() {
     };
   }, [selectedSessionId]);
 
-  const shareSubdomain = userHandle || "donotforget";
-
   useEffect(() => {
     refreshEvents(selectedSessionId);
     const selected = sessions.find((s) => s.id === selectedSessionId);
-    if (selected?.shareToken) {
-      setShareUrl(`http://${shareSubdomain}.localhost:1455/${selected.shareToken}`);
+    if (selected?.shareUrl) {
+      setShareUrl(selected.shareUrl);
     } else {
       setShareUrl("");
     }
-  }, [selectedSessionId, sessions, shareSubdomain]);
+  }, [selectedSessionId, sessions]);
 
   const sessionsByDay = useMemo(() => {
     const groups: Array<{ day: string; rows: SessionRow[] }> = [];

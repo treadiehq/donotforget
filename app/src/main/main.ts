@@ -5,6 +5,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { WebSocketServer, WebSocket } from "ws";
+import { Tunnel as CfTunnel, bin as cfBin, install as cfInstall } from "cloudflared";
 import type { CapturePayload, AppState } from "../shared/types";
 import { SessionDb } from "./db";
 import { sessionToJson, sessionToMarkdown } from "./exporters";
@@ -22,6 +23,10 @@ let shareServer!: ShareServer;
 const helperSockets = new Set<WebSocket>();
 let captureWss: WebSocketServer | null = null;
 const autoTitledSessions = new Set<number>();
+let tunnelChild: CfTunnel | ChildProcess | null = null;
+let tunnelUrl: string | null = null;
+let tunnelReconnecting = false;
+let activeTunnelProvider: "privateconnect" | "cloudflare" | null = null;
 
 function getState(): AppState {
   return {
@@ -336,6 +341,149 @@ async function generateAutoTitle(sessionId: number) {
   }
 }
 
+async function ensureTunnel(): Promise<string> {
+  const provider = (db.getSetting("tunnelProvider") || "privateconnect") as "privateconnect" | "cloudflare";
+
+  if (tunnelChild && tunnelUrl && activeTunnelProvider === provider) return tunnelUrl;
+
+  if (tunnelChild) closeTunnel();
+
+  await shareServer.start();
+
+  if (provider === "cloudflare") {
+    if (!existsSync(cfBin)) {
+      await cfInstall(cfBin);
+    }
+
+    const child = CfTunnel.quick("http://127.0.0.1:1455");
+    tunnelChild = child;
+    activeTunnelProvider = "cloudflare";
+
+    const url = await new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Tunnel URL timeout")), 30000);
+      child.once("url", (u) => {
+        clearTimeout(timeout);
+        resolve(u);
+      });
+      child.once("error", (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+    tunnelUrl = url;
+
+    child.on("exit", () => {
+      tunnelChild = null;
+      tunnelUrl = null;
+      activeTunnelProvider = null;
+      if (!isQuitting && !tunnelReconnecting && db.hasSharedSessions()) {
+        reconnectTunnel();
+      }
+    });
+  } else {
+    const url = await startPrivateConnectTunnel();
+    tunnelUrl = url;
+  }
+
+  db.updateAllShareUrls(tunnelUrl!);
+  broadcastState();
+
+  return tunnelUrl!;
+}
+
+async function startPrivateConnectTunnel(): Promise<string> {
+  const binPath = require.resolve("private-connect/dist/index.js");
+  const child = spawn(process.execPath, [binPath, "tunnel", "1455"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, FORCE_COLOR: "0" }
+  });
+  tunnelChild = child;
+  activeTunnelProvider = "privateconnect";
+
+  const url = await new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error("Private Connect tunnel URL timeout"));
+    }, 30000);
+
+    let output = "";
+    const urlPattern = /https:\/\/[a-z0-9-]+\.privateconnect\.co/;
+
+    const onData = (chunk: Buffer) => {
+      output += chunk.toString();
+      const match = output.match(urlPattern);
+      if (match) {
+        clearTimeout(timeout);
+        child.stdout?.removeListener("data", onData);
+        child.stderr?.removeListener("data", onErrData);
+        resolve(match[0]);
+      }
+    };
+    const onErrData = (chunk: Buffer) => {
+      output += chunk.toString();
+      const match = output.match(urlPattern);
+      if (match) {
+        clearTimeout(timeout);
+        child.stdout?.removeListener("data", onData);
+        child.stderr?.removeListener("data", onErrData);
+        resolve(match[0]);
+      }
+    };
+
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onErrData);
+    child.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timeout);
+      if (!tunnelUrl) reject(new Error(`Private Connect exited with code ${code}`));
+    });
+  });
+
+  child.on("exit", () => {
+    tunnelChild = null;
+    tunnelUrl = null;
+    activeTunnelProvider = null;
+    if (!isQuitting && !tunnelReconnecting && db.hasSharedSessions()) {
+      reconnectTunnel();
+    }
+  });
+
+  return url;
+}
+
+async function reconnectTunnel() {
+  if (tunnelReconnecting) return;
+  tunnelReconnecting = true;
+  const delays = [2000, 4000, 8000, 15000, 30000];
+  for (let i = 0; i < delays.length; i++) {
+    await new Promise((r) => setTimeout(r, delays[i]));
+    if (isQuitting || !db.hasSharedSessions()) break;
+    try {
+      await ensureTunnel();
+      tunnelReconnecting = false;
+      return;
+    } catch {}
+  }
+  tunnelReconnecting = false;
+}
+
+function closeTunnel() {
+  if (tunnelChild) {
+    const c = tunnelChild;
+    tunnelChild = null;
+    tunnelUrl = null;
+    activeTunnelProvider = null;
+    if (c instanceof CfTunnel) {
+      c.stop();
+    } else {
+      c.kill();
+    }
+  }
+}
+
 function toggleRecording(targetSessionId?: number | null) {
   if (recording) {
     stopRecording();
@@ -513,13 +661,17 @@ async function initIpc() {
   ipcMain.handle("export:json", async (_event, sessionId: number) => exportSession(sessionId, "json"));
   ipcMain.handle("session:copy", (_event, sessionId: number) => copySession(sessionId));
   ipcMain.handle("share:create", async (_event, sessionId: number) => {
-    await shareServer.start();
+    const baseUrl = await ensureTunnel();
     const token = randomBytes(18).toString("base64url");
-    db.setShareToken(sessionId, token);
-    return shareServer.urlForToken(token);
+    const fullUrl = `${baseUrl}/${token}`;
+    db.setShareToken(sessionId, token, fullUrl);
+    return fullUrl;
   });
-  ipcMain.handle("share:revoke", (_event, sessionId: number) => {
+  ipcMain.handle("share:revoke", async (_event, sessionId: number) => {
     db.setShareToken(sessionId, null);
+    if (!db.hasSharedSessions()) {
+      await closeTunnel();
+    }
     return true;
   });
   ipcMain.handle("session:save-draft", (_event, sessionId: number, content: string) => {
@@ -541,6 +693,12 @@ async function initIpc() {
     db.setSetting(key, value);
     if (key === "handle") {
       shareServer.setHandle(value);
+    }
+    if (key === "tunnelProvider" && db.hasSharedSessions()) {
+      closeTunnel();
+      ensureTunnel()
+        .then(() => broadcastState())
+        .catch(() => {});
     }
   });
   ipcMain.handle("data:clear-all", () => {
@@ -728,7 +886,7 @@ app.whenReady().then(async () => {
   const savedHandle = db.getSetting("handle");
   if (savedHandle) shareServer.setHandle(savedHandle);
   if (db.hasSharedSessions()) {
-    shareServer.start().catch(() => {});
+    ensureTunnel().catch(() => {});
   }
   await initIpc();
   createWindow();
@@ -739,6 +897,7 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  closeTunnel();
   if (helperProc && !helperProc.killed) {
     helperProc.kill();
   }

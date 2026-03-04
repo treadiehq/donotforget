@@ -205,9 +205,30 @@ function GeneralTab({
         />
         {handleError && <p className="settings-error">{handleError}</p>}
         <p className="settings-hint">
-          Your share links will be{" "}
-          <code className="settings-url-preview">{previewSubdomain}.localhost:1455/...</code>
+          Your share links will use a public tunnel so anyone can access them.
         </p>
+      </div>
+
+      <div className="ai-row">
+        <div className="ai-row-info">
+          <span className="ai-row-title">Tunnel Provider</span>
+          <span className="ai-row-desc">
+            {(settings.tunnelProvider || "privateconnect") === "privateconnect"
+              ? "Uses privateconnect.co for public share links."
+              : "Uses Cloudflare Quick Tunnels for public share links."}
+          </span>
+        </div>
+        <div className="settings-select-wrap">
+          <select
+            id="settings-tunnel-provider"
+            className="settings-select"
+            value={settings.tunnelProvider || "privateconnect"}
+            onChange={(e) => onUpdate("tunnelProvider", e.target.value)}
+          >
+            <option value="privateconnect">Private Connect</option>
+            <option value="cloudflare">Cloudflare</option>
+          </select>
+        </div>
       </div>
 
       <div className="danger-zone">

@@ -14,6 +14,7 @@ export interface SessionRow {
   title: string;
   isShared: number;
   shareToken: string | null;
+  shareUrl: string | null;
   preview: string | null;
 }
 
