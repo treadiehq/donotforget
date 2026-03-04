@@ -626,12 +626,12 @@ Format your response as:
   });
 
   ipcMain.handle("app:check-for-updates", async () => {
-    const VERSION_URL = "https://gist.githubusercontent.com/dantelex/7c141e24257a278783e5651b74f3f7b8/raw/version.json";
+    const RELEASES_URL = "https://api.github.com/repos/treadiehq/donotforget/releases/latest";
     try {
-      const res = await fetch(VERSION_URL, { headers: { "User-Agent": "DoNotForget" } });
+      const res = await fetch(RELEASES_URL, { headers: { "User-Agent": "DoNotForget" } });
       if (!res.ok) return { available: false, error: `Version check failed (${res.status})` };
       const data = await res.json();
-      const latest = (data.version || "").replace(/^v/, "");
+      const latest = (data.tag_name || "").replace(/^v/, "");
       let current = app.getVersion();
       for (const p of [path.join(__dirname, "../../../package.json"), path.join(app.getAppPath(), "package.json")]) {
         try {
@@ -642,12 +642,13 @@ Format your response as:
       if (!latest) return { available: false, error: "No version info found" };
       console.log(`[update-check] current=${current} latest=${latest}`);
       const isNewer = latest.localeCompare(current, undefined, { numeric: true, sensitivity: "base" }) > 0;
+      const dmgAsset = (data.assets || []).find((a: any) => a.name.endsWith(".dmg") && a.name.includes("arm64"));
       return {
         available: isNewer,
         currentVersion: current,
         latestVersion: latest,
-        releaseUrl: data.url || `https://github.com/treadiehq/donotforget/releases/tag/v${latest}`,
-        downloadUrl: data.downloadUrl || data.url || null
+        releaseUrl: data.html_url || `https://github.com/treadiehq/donotforget/releases/tag/v${latest}`,
+        downloadUrl: dmgAsset?.browser_download_url || data.html_url || null
       };
     } catch (err: any) {
       return { available: false, error: err.message || "Network error" };
