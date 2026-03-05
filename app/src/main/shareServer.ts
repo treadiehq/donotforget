@@ -5,6 +5,7 @@ import path from "node:path";
 import { app } from "electron";
 import type { SessionDb } from "./db";
 import { sessionToMarkdown } from "./exporters";
+import { keychainGet } from "./keychain";
 
 const VALID_MODELS: Record<string, string[]> = {
   openai: ["gpt-5.2", "gpt-5.3-codex", "gpt-4o", "gpt-4o-mini"],
@@ -75,7 +76,14 @@ function inline(s: string): string {
   out = out.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   out = out.replace(/\*(.+?)\*/g, "<em>$1</em>");
   out = out.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:#60a5fa;text-decoration:none" target="_blank" rel="noopener">$1</a>');
+  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, url) => {
+    let safe = url.trim();
+    try {
+      const parsed = new URL(safe);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") safe = "#";
+    } catch { safe = "#"; }
+    return `<a href="${esc(safe)}" style="color:#60a5fa;text-decoration:none" target="_blank" rel="noopener">${label}</a>`;
+  });
   return out;
 }
 
@@ -183,6 +191,23 @@ function loadFile(filename: string): string {
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
+const MAX_CHAT_MESSAGE_LENGTH = 4000;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_REQUESTS = 10;
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(token: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(token);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(token, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= RATE_LIMIT_MAX_REQUESTS) return false;
+  entry.count++;
+  return true;
+}
+
 export class ShareServer {
   private app = express();
   private server: Server | null = null;
@@ -237,6 +262,16 @@ export class ShareServer {
   }
 
   private configure() {
+    this.app.use((_req, res, next) => {
+      res.setHeader(
+        "Content-Security-Policy",
+        "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none';"
+      );
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("X-Frame-Options", "DENY");
+      next();
+    });
+
     if (isDev) {
       this.app.use((_req, res, next) => {
         res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
@@ -247,20 +282,30 @@ export class ShareServer {
 
     this.app.use(express.json());
 
-    this.app.get("/api/ai-status", (_req, res) => {
+    this.app.get("/api/ai-status", async (_req, res) => {
       const settings = this.db.getAllSettings();
-      const enabled = settings.aiEnabled === "true" && !!settings.aiApiKey;
+      const apiKey = await keychainGet("aiApiKey");
+      const enabled = settings.aiEnabled === "true" && !!apiKey;
       res.json({ enabled });
     });
 
     this.app.post("/api/ai-chat", async (req, res) => {
       const settings = this.db.getAllSettings();
-      if (settings.aiEnabled !== "true" || !settings.aiApiKey) {
+      const apiKey = await keychainGet("aiApiKey");
+      if (settings.aiEnabled !== "true" || !apiKey) {
         res.status(403).json({ error: "AI not configured" });
         return;
       }
       const { message, token } = req.body;
       if (!message || !token) { res.status(400).json({ error: "Missing message or token" }); return; }
+      if (typeof message !== "string" || message.length > MAX_CHAT_MESSAGE_LENGTH) {
+        res.status(400).json({ error: "Message too long" });
+        return;
+      }
+      if (!checkRateLimit(token)) {
+        res.status(429).json({ error: "Too many requests — try again in a minute" });
+        return;
+      }
 
       const session = this.db.getSessionByToken(token);
       if (!session) { res.status(404).json({ error: "Session not found" }); return; }
@@ -287,7 +332,7 @@ How to respond:
 - Use markdown for readability when helpful`;
 
       try {
-        const reply = await callAiProviderShare(provider, model, settings.aiApiKey, systemPrompt, message);
+        const reply = await callAiProviderShare(provider, model, apiKey, systemPrompt, message);
         res.json({ reply });
       } catch (err: any) {
         res.status(500).json({ error: err.message || "AI request failed" });

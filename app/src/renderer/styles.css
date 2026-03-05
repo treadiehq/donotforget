@@ -2034,8 +2034,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .daily-summary-card {
   margin-bottom: 4px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  @apply bg-blue-300/10;
+  @apply border border-gray-500/10;
+  @apply bg-gray-500/10;
   overflow: hidden;
 }
 .daily-summary-header {

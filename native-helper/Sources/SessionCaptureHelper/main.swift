@@ -26,7 +26,7 @@ final class WebSocketClient {
         isConnecting = false
         backoffSeconds = 0.7
         listen()
-        print("WS connected to \(wsURL.absoluteString)")
+        print("WS connected to \(wsURL.absoluteString)"); fflush(stdout)
     }
 
     private func listen() {
@@ -47,7 +47,7 @@ final class WebSocketClient {
                 self.listen()
             case .failure(let error):
                 self.isConnected = false
-                print("WS receive error: \(error.localizedDescription)")
+                print("WS receive error: \(error.localizedDescription)"); fflush(stdout)
                 self.scheduleReconnect()
             }
         }
@@ -72,12 +72,12 @@ final class WebSocketClient {
             task.send(.string(text)) { [weak self] error in
                 if let error {
                     self?.isConnected = false
-                    print("WS send error: \(error.localizedDescription)")
+                    print("WS send error: \(error.localizedDescription)"); fflush(stdout)
                     self?.scheduleReconnect()
                 }
             }
         } catch {
-            print("JSON encode error: \(error.localizedDescription)")
+            print("JSON encode error: \(error.localizedDescription)"); fflush(stdout)
         }
     }
 }
@@ -93,6 +93,11 @@ final class HelperCoordinator {
     private let selectionOnlyCapture = true
     private var activeSelectionSignature: String?
 
+    private func debugLog(_ msg: String) {
+        print(msg)
+        fflush(stdout)
+    }
+
     func run() {
         ws.onRecordingState = { [weak self] isRecording in
             DispatchQueue.main.async {
@@ -102,14 +107,14 @@ final class HelperCoordinator {
         ensureAccessibilityAccess()
         ws.connect()
         installGlobalHotkey()
-        print("Helper running. Press Cmd+Shift+9 to toggle recording.")
+        debugLog("Helper running. AXTrusted=\(AXIsProcessTrusted()). Press Cmd+Shift+9 to toggle recording.")
     }
 
     private func ensureAccessibilityAccess() {
         if AXIsProcessTrusted() { return }
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
-        print("Accessibility permission is required. Enable this helper in System Settings > Privacy & Security > Accessibility.")
+        debugLog("Accessibility permission is required. Enable this helper in System Settings > Privacy & Security > Accessibility.")
     }
 
     private func installGlobalHotkey() {
@@ -155,10 +160,10 @@ final class HelperCoordinator {
         recording = next
         if recording {
             startTimer()
-            print("Recording ON")
+            debugLog("Recording ON")
         } else {
             stopTimer()
-            print("Recording OFF")
+            debugLog("Recording OFF")
         }
     }
 
@@ -327,26 +332,26 @@ final class HelperCoordinator {
         let selStatus = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &rawRef)
         if selStatus == .success, let raw = rawRef {
             let str = toString(raw as AnyObject)
-            if verbose { print("[ax-detail] \(role): kAXSelectedText status=ok val=\"\(str?.prefix(40) ?? "nil")\"") }
+            if verbose { debugLog("[ax-detail] \(role): kAXSelectedText status=ok val=\"\(str?.prefix(40) ?? "nil")\"") }
             if let s = str, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return s }
         } else {
-            if verbose { print("[ax-detail] \(role): kAXSelectedText status=\(selStatus.rawValue)") }
+            if verbose { debugLog("[ax-detail] \(role): kAXSelectedText status=\(selStatus.rawValue)") }
         }
 
         if let markerSelected = selectedTextViaTextMarkerRange(element),
            !markerSelected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if verbose { print("[ax-detail] \(role): textMarkerRange hit len=\(markerSelected.count)") }
+            if verbose { debugLog("[ax-detail] \(role): textMarkerRange hit len=\(markerSelected.count)") }
             return markerSelected
         } else {
-            if verbose { print("[ax-detail] \(role): textMarkerRange miss") }
+            if verbose { debugLog("[ax-detail] \(role): textMarkerRange miss") }
         }
 
         if let rangedSelected = selectedTextViaRanges(element),
            !rangedSelected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if verbose { print("[ax-detail] \(role): selectedRanges hit len=\(rangedSelected.count)") }
+            if verbose { debugLog("[ax-detail] \(role): selectedRanges hit len=\(rangedSelected.count)") }
             return rangedSelected
         } else {
-            if verbose { print("[ax-detail] \(role): selectedRanges miss") }
+            if verbose { debugLog("[ax-detail] \(role): selectedRanges miss") }
         }
 
         return nil
@@ -440,7 +445,7 @@ final class HelperCoordinator {
             ]
         ]
         ws.send(json: payload)
-        print("Capture sent (clipboard) from \(appName): \(normalizedText.prefix(60))...")
+        debugLog("[capture] clipboard from \(appName): \(normalizedText.prefix(60))...")
     }
 
     private func captureFocusedText() {
@@ -453,7 +458,7 @@ final class HelperCoordinator {
         let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? "Unknown"
 
         if candidates.isEmpty {
-            print("[debug] \(appName): no AX candidates found")
+            debugLog("[debug] \(appName): no AX candidates found")
             return
         }
 
@@ -476,11 +481,11 @@ final class HelperCoordinator {
             if let result = extractTextWithParents(from: element, verbose: verbose) {
                 source = result.source
                 text = result.text
-                print("[debug] \(appName): hit on candidate \(idx) (role=\(role)), source=\(source), len=\(result.text.count)")
+                debugLog("[debug] \(appName): hit on candidate \(idx) (role=\(role)), source=\(source), len=\(result.text.count)")
                 break
             } else {
                 if verbose {
-                    print("[debug] \(appName): miss on candidate \(idx) (role=\(role))")
+                    debugLog("[debug] \(appName): miss on candidate \(idx) (role=\(role))")
                 }
             }
         }
@@ -493,14 +498,14 @@ final class HelperCoordinator {
                 if let deepFound = findSelectedTextRecursive(from: window) {
                     source = "selection"
                     text = deepFound
-                    print("[debug] \(appName): deep-search hit, len=\(deepFound.count)")
+                    debugLog("[debug] \(appName): deep-search hit, len=\(deepFound.count)")
                 }
             }
         }
 
         guard let text else {
             if verbose {
-                print("[debug] \(appName): no text extracted from \(candidates.count) candidates")
+                debugLog("[debug] \(appName): no text extracted from \(candidates.count) candidates")
             }
             return
         }
@@ -539,7 +544,7 @@ final class HelperCoordinator {
             ]
         ]
         ws.send(json: payload)
-        print("Capture sent (\(source)) from \(appName): \(normalizedText.prefix(60))...")
+        debugLog("[capture] sent (\(source)) from \(appName): \(normalizedText.prefix(60))...")
     }
 }
 

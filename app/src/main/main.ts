@@ -10,6 +10,7 @@ import type { CapturePayload, AppState } from "../shared/types";
 import { SessionDb } from "./db";
 import { sessionToJson, sessionToMarkdown } from "./exporters";
 import { ShareServer } from "./shareServer";
+import { KEYCHAIN_KEYS, keychainGet, keychainSet, keychainDelete } from "./keychain";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -256,7 +257,7 @@ function buildRichEventContext(events: Array<{ ts: number; app: string; window: 
 async function generateSmartSummary(sessionId: number) {
   const settings = db.getAllSettings();
   if (settings.aiEnabled !== "true" || settings.aiSmartSummaries !== "true") return;
-  const apiKey = settings.aiApiKey;
+  const apiKey = await keychainGet("aiApiKey");
   if (!apiKey) return;
 
   const provider = settings.aiProvider || "openai";
@@ -307,7 +308,7 @@ async function generateAutoTitle(sessionId: number) {
   if (autoTitledSessions.has(sessionId)) return;
   const settings = db.getAllSettings();
   if (settings.aiEnabled !== "true") return;
-  const apiKey = settings.aiApiKey;
+  const apiKey = await keychainGet("aiApiKey");
   if (!apiKey) return;
 
   const session = db.getSession(sessionId);
@@ -409,7 +410,7 @@ async function generateDailySummary(dateStr: string): Promise<string | null> {
   if (!sessions.length) return null;
 
   const aiEnabled = settings.aiEnabled === "true";
-  const apiKey = settings.aiApiKey;
+  const apiKey = aiEnabled ? await keychainGet("aiApiKey") : null;
 
   if (!aiEnabled || !apiKey) {
     const digest = buildStructuredDigest(dateStr);
@@ -836,8 +837,29 @@ async function initIpc() {
     );
   });
   ipcMain.handle("sessions:search", (_event, query: string) => db.searchSessions(query));
-  ipcMain.handle("settings:get-all", () => db.getAllSettings());
-  ipcMain.handle("settings:set", (_event, key: string, value: string) => {
+  ipcMain.handle("settings:get-all", async () => {
+    const s = db.getAllSettings();
+    // Keychain-backed keys: remove SQLite value (migration may have left a stale row) and
+    // replace with a sentinel so the UI knows a key is configured without seeing the raw value.
+    for (const k of KEYCHAIN_KEYS) {
+      delete s[k];
+      const val = await keychainGet(k);
+      if (val) s[k] = "__configured__";
+    }
+    return s;
+  });
+  ipcMain.handle("settings:set", async (_event, key: string, value: string) => {
+    if (KEYCHAIN_KEYS.has(key)) {
+      // Never persist API keys in SQLite — store in Keychain only
+      if (value && value !== "__configured__") {
+        await keychainSet(key, value);
+      } else if (!value) {
+        await keychainDelete(key);
+      }
+      // Ensure no stale plaintext row remains in SQLite
+      db.deleteSetting(key);
+      return;
+    }
     db.setSetting(key, value);
     if (key === "handle") {
       shareServer.setHandle(value);
@@ -868,7 +890,7 @@ async function initIpc() {
   ipcMain.handle("ai:chat", async (_event, message: string, sessionId: number | null) => {
     const settings = db.getAllSettings();
     if (settings.aiEnabled !== "true") return "AI is not enabled. Go to Settings → AI Behavior to enable.";
-    const apiKey = settings.aiApiKey;
+    const apiKey = await keychainGet("aiApiKey");
     if (!apiKey) return "No API key configured. Add one in Settings → AI Behavior.";
 
     const provider = settings.aiProvider || "openai";
@@ -934,7 +956,7 @@ Rules:
     const settings = db.getAllSettings();
     if (settings.aiEnabled !== "true") return "AI is not enabled.";
     if (settings.aiContentEnhancement !== "true") return "Content Enhancement is not enabled. Turn it on in Settings → AI Behavior.";
-    const apiKey = settings.aiApiKey;
+    const apiKey = await keychainGet("aiApiKey");
     if (!apiKey) return "No API key configured.";
 
     const provider = settings.aiProvider || "openai";
@@ -1048,6 +1070,15 @@ app.whenReady().then(async () => {
   if (db.hasSharedSessions()) {
     ensureTunnel().catch(() => {});
   }
+
+  // One-time migration: move any API key stored in plaintext SQLite into the Keychain
+  const legacyKey = db.getSetting("aiApiKey");
+  if (legacyKey) {
+    const existing = await keychainGet("aiApiKey");
+    if (!existing) await keychainSet("aiApiKey", legacyKey);
+    db.deleteSetting("aiApiKey");
+  }
+
   await initIpc();
   createWindow();
   createTray();

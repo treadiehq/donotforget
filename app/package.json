@@ -1,6 +1,6 @@
 {
   "name": "do-not-forget",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": true,
   "main": "dist/main/main/main.js",
   "scripts": {
@@ -16,7 +16,7 @@
     "build:helper": "cd ../native-helper && swift build -c release && mkdir -p ../app/build/helper && cp .build/release/SessionCaptureHelper ../app/build/helper/",
     "package": "bun run build && bun run build:helper && electron-builder --mac",
     "start": "env -u ELECTRON_RUN_AS_NODE electron ./dist/main/main/main.js",
-    "rebuild:native": "env -u ELECTRON_RUN_AS_NODE electron-rebuild -f -w better-sqlite3"
+    "rebuild:native": "env -u ELECTRON_RUN_AS_NODE electron-rebuild -f -w better-sqlite3,keytar"
   },
   "build": {
     "appId": "com.donotforget.app",
@@ -68,6 +68,7 @@
     "better-sqlite3": "^11.8.1",
     "cloudflared": "^0.7.1",
     "express": "^4.21.2",
+    "keytar": "^7.9.0",
     "private-connect": "^0.6.17",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

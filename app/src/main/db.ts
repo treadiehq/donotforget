@@ -381,6 +381,10 @@ export class SessionDb {
       .run(key, value);
   }
 
+  deleteSetting(key: string): void {
+    this.db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+  }
+
   getAllSettings(): Record<string, string> {
     const rows = this.db.prepare("SELECT key, value FROM settings").all() as Array<{ key: string; value: string }>;
     const result: Record<string, string> = {};

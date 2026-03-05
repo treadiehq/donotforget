@@ -353,8 +353,8 @@ function AIBehaviorTab({
           <input
             className="settings-input ai-key-input"
             type="password"
-            placeholder="sk-..."
-            value={settings.aiApiKey || ""}
+            placeholder={settings.aiApiKey === "__configured__" ? "Key configured — type to replace" : "sk-..."}
+            value={settings.aiApiKey === "__configured__" ? "" : (settings.aiApiKey || "")}
             disabled={!enabled}
             onChange={(e) => onUpdate("aiApiKey", e.target.value)}
           />
