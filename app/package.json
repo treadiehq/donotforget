@@ -1,6 +1,6 @@
 {
   "name": "do-not-forget",
-  "version": "0.1.9",
+  "version": "0.1.11",
   "private": true,
   "main": "dist/main/main/main.js",
   "scripts": {
@@ -27,7 +27,11 @@
     "files": [
       "dist/**/*",
       "node_modules/**/*",
+      "!node_modules/cloudflared/bin/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/private-connect/**/*"
     ],
     "extraResources": [
       {
@@ -44,8 +48,12 @@
     "mac": {
       "category": "public.app-category.productivity",
       "target": "dmg",
-      "identity": null,
-      "icon": "build/icon.png"
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "icon": "build/icon.png",
+      "notarize": false
     },
     "dmg": {
       "title": "Do Not Forget",

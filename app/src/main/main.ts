@@ -541,10 +541,22 @@ async function ensureTunnel(): Promise<string> {
 }
 
 async function startPrivateConnectTunnel(): Promise<string> {
-  const binPath = require.resolve("private-connect/dist/index.js");
+  // Resolve the private-connect entry point, handling asar unpacking.
+  let binPath: string;
+  try {
+    binPath = require.resolve("private-connect/dist/index.js");
+    // In a packaged app, node_modules live inside app.asar which can't be
+    // spawned as a script. Use the unpacked copy instead.
+    binPath = binPath.replace(/app\.asar([/\\])/, "app.asar.unpacked$1");
+  } catch {
+    throw new Error("private-connect module not found");
+  }
+
+  // process.execPath in a packaged Electron app is the Electron binary.
+  // Setting ELECTRON_RUN_AS_NODE=1 makes it behave like plain Node.js.
   const child = spawn(process.execPath, [binPath, "tunnel", "1455"], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, FORCE_COLOR: "0" }
+    env: { ...process.env, FORCE_COLOR: "0", ELECTRON_RUN_AS_NODE: "1" }
   });
   tunnelChild = child;
   activeTunnelProvider = "privateconnect";
