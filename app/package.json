@@ -64,7 +64,7 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "icon": "build/icon.png",
-      "notarize": false
+      "notarize": true
     },
     "dmg": {
       "title": "Do Not Forget",
