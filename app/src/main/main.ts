@@ -541,22 +541,32 @@ async function ensureTunnel(): Promise<string> {
 }
 
 async function startPrivateConnectTunnel(): Promise<string> {
-  // Resolve the private-connect entry point, handling asar unpacking.
+  // Resolve private-connect entry point. In a packaged app it lives inside
+  // app.asar (a virtual fs), so we swap to the real app.asar.unpacked path
+  // which is a normal directory that a spawned child process can read from.
+  // All of private-connect's dependencies (socket.io-client etc.) are also
+  // unpacked via the asarUnpack config in package.json.
   let binPath: string;
   try {
     binPath = require.resolve("private-connect/dist/index.js");
-    // In a packaged app, node_modules live inside app.asar which can't be
-    // spawned as a script. Use the unpacked copy instead.
     binPath = binPath.replace(/app\.asar([/\\])/, "app.asar.unpacked$1");
   } catch {
     throw new Error("private-connect module not found");
   }
 
   // process.execPath in a packaged Electron app is the Electron binary.
-  // Setting ELECTRON_RUN_AS_NODE=1 makes it behave like plain Node.js.
+  // ELECTRON_RUN_AS_NODE=1 makes it behave like plain Node.js.
+  // NODE_PATH points to the unpacked node_modules so deps like socket.io-client
+  // are found by the spawned child process.
+  const unpackedNodeModules = path.join(path.dirname(path.dirname(binPath)), "..");
   const child = spawn(process.execPath, [binPath, "tunnel", "1455"], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, FORCE_COLOR: "0", ELECTRON_RUN_AS_NODE: "1" }
+    env: {
+      ...process.env,
+      FORCE_COLOR: "0",
+      ELECTRON_RUN_AS_NODE: "1",
+      NODE_PATH: unpackedNodeModules
+    }
   });
   tunnelChild = child;
   activeTunnelProvider = "privateconnect";

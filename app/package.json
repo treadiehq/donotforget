@@ -1,6 +1,6 @@
 {
   "name": "do-not-forget",
-  "version": "0.1.11",
+  "version": "0.1.13",
   "private": true,
   "main": "dist/main/main/main.js",
   "scripts": {
@@ -31,7 +31,18 @@
       "package.json"
     ],
     "asarUnpack": [
-      "node_modules/private-connect/**/*"
+      "node_modules/better-sqlite3/**/*",
+      "node_modules/keytar/**/*",
+      "node_modules/private-connect/**/*",
+      "node_modules/socket.io-client/**/*",
+      "node_modules/socket.io-parser/**/*",
+      "node_modules/@socket.io/**/*",
+      "node_modules/engine.io-client/**/*",
+      "node_modules/engine.io-parser/**/*",
+      "node_modules/xmlhttprequest-ssl/**/*",
+      "node_modules/debug/**/*",
+      "node_modules/ms/**/*",
+      "node_modules/ws/**/*"
     ],
     "extraResources": [
       {
