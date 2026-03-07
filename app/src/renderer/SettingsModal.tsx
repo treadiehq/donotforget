@@ -431,12 +431,26 @@ function AIBehaviorTab({
 }
 
 function AboutTab() {
-  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "latest" | "available" | "error">("idle");
+  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "latest" | "available" | "downloading" | "ready" | "error">("idle");
   const [version, setVersion] = useState("0.1.0");
-  const [updateInfo, setUpdateInfo] = useState<{ latestVersion?: string; releaseUrl?: string; downloadUrl?: string }>({});
+  const [latestVersion, setLatestVersion] = useState<string | undefined>();
+  const [downloadPercent, setDownloadPercent] = useState(0);
 
   useEffect(() => {
     window.sessionCaptureApi.getVersion().then(setVersion).catch(() => {});
+
+    const offAvailable = window.sessionCaptureApi.onUpdateAvailable((info) => {
+      setLatestVersion(info.version);
+      setUpdateStatus("downloading");
+    });
+    const offProgress = window.sessionCaptureApi.onUpdateProgress((info) => {
+      setDownloadPercent(info.percent);
+    });
+    const offDownloaded = window.sessionCaptureApi.onUpdateDownloaded((info) => {
+      setLatestVersion(info.version);
+      setUpdateStatus("ready");
+    });
+    return () => { offAvailable(); offProgress(); offDownloaded(); };
   }, []);
 
   const checkForUpdates = async () => {
@@ -444,15 +458,10 @@ function AboutTab() {
     try {
       const result = await window.sessionCaptureApi.checkForUpdates();
       if (result.error) {
-        console.error("Update check error:", result.error);
         setUpdateStatus("error");
       } else if (result.available) {
-        setUpdateStatus("available");
-        setUpdateInfo({
-          latestVersion: result.latestVersion,
-          releaseUrl: result.releaseUrl,
-          downloadUrl: result.downloadUrl
-        });
+        setLatestVersion(result.latestVersion);
+        setUpdateStatus("downloading");
       } else {
         setUpdateStatus("latest");
       }
@@ -461,9 +470,8 @@ function AboutTab() {
     }
   };
 
-  const openDownload = () => {
-    const url = updateInfo.downloadUrl || updateInfo.releaseUrl;
-    if (url) window.open(url, "_blank");
+  const installUpdate = () => {
+    window.sessionCaptureApi.installUpdate();
   };
 
   return (
@@ -489,14 +497,21 @@ function AboutTab() {
 
       <div className="about-row">
         <span className="about-row-label">Updates</span>
-        {updateStatus === "available" ? (
-          <button className="about-update-btn about-update-available" onClick={openDownload}>
+        {updateStatus === "ready" ? (
+          <button className="about-update-btn about-update-available" onClick={installUpdate}>
             <svg className="about-update-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <polyline points="7 10 12 15 17 10" />
               <line x1="12" y1="15" x2="12" y2="3" />
             </svg>
-            Download v{updateInfo.latestVersion}
+            Restart to install v{latestVersion}
+          </button>
+        ) : updateStatus === "downloading" ? (
+          <button className="about-update-btn" disabled>
+            <svg className="about-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+            {downloadPercent > 0 ? `Downloading ${downloadPercent}%` : `Downloading v${latestVersion}…`}
           </button>
         ) : (
           <button

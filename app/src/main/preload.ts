@@ -48,11 +48,9 @@ const api = {
     available: boolean;
     currentVersion?: string;
     latestVersion?: string;
-    releaseUrl?: string;
-    downloadUrl?: string;
-    releaseNotes?: string;
     error?: string;
   }>,
+  installUpdate: () => ipcRenderer.invoke("app:install-update") as Promise<void>,
   onStateChanged: (listener: (state: AppState) => void) => {
     const wrapped = (_event: unknown, state: AppState) => listener(state);
     ipcRenderer.on("state-changed", wrapped);
@@ -62,6 +60,21 @@ const api = {
     const wrapped = (_event: unknown, sessionId: number) => listener(sessionId);
     ipcRenderer.on("events-updated", wrapped);
     return () => ipcRenderer.off("events-updated", wrapped);
+  },
+  onUpdateAvailable: (listener: (info: { version: string }) => void) => {
+    const wrapped = (_event: unknown, info: { version: string }) => listener(info);
+    ipcRenderer.on("update:available", wrapped);
+    return () => ipcRenderer.off("update:available", wrapped);
+  },
+  onUpdateDownloaded: (listener: (info: { version: string }) => void) => {
+    const wrapped = (_event: unknown, info: { version: string }) => listener(info);
+    ipcRenderer.on("update:downloaded", wrapped);
+    return () => ipcRenderer.off("update:downloaded", wrapped);
+  },
+  onUpdateProgress: (listener: (info: { percent: number }) => void) => {
+    const wrapped = (_event: unknown, info: { percent: number }) => listener(info);
+    ipcRenderer.on("update:progress", wrapped);
+    return () => ipcRenderer.off("update:progress", wrapped);
   }
 };
 

@@ -1,6 +1,6 @@
 {
   "name": "do-not-forget",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "private": true,
   "main": "dist/main/main/main.js",
   "scripts": {
@@ -56,6 +56,11 @@
         "filter": ["SessionCaptureHelper"]
       }
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "treadiehq",
+      "repo": "donotforget"
+    },
     "mac": {
       "category": "public.app-category.productivity",
       "target": "dmg",
@@ -86,6 +91,7 @@
     "@heroicons/react": "^2.2.0",
     "better-sqlite3": "^11.8.1",
     "cloudflared": "^0.7.1",
+    "electron-updater": "^6.8.3",
     "express": "^4.21.2",
     "keytar": "^7.9.0",
     "private-connect": "^0.6.17",

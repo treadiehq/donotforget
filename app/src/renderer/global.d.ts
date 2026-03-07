@@ -34,13 +34,14 @@ declare global {
         available: boolean;
         currentVersion?: string;
         latestVersion?: string;
-        releaseUrl?: string;
-        downloadUrl?: string;
-        releaseNotes?: string;
         error?: string;
       }>;
+      installUpdate: () => Promise<void>;
       onStateChanged: (listener: (state: AppState) => void) => () => void;
       onEventsUpdated: (listener: (sessionId: number) => void) => () => void;
+      onUpdateAvailable: (listener: (info: { version: string }) => void) => () => void;
+      onUpdateDownloaded: (listener: (info: { version: string }) => void) => () => void;
+      onUpdateProgress: (listener: (info: { percent: number }) => void) => () => void;
     };
   }
 }

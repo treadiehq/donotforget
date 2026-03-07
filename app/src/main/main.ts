@@ -11,6 +11,7 @@ import { SessionDb } from "./db";
 import { sessionToJson, sessionToMarkdown } from "./exporters";
 import { ShareServer } from "./shareServer";
 import { KEYCHAIN_KEYS, keychainGet, keychainSet, keychainDelete } from "./keychain";
+import { autoUpdater } from "electron-updater";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -1042,33 +1043,20 @@ Format your response as:
   });
 
   ipcMain.handle("app:check-for-updates", async () => {
-    const RELEASES_URL = "https://api.github.com/repos/treadiehq/donotforget/releases/latest";
     try {
-      const res = await fetch(RELEASES_URL, { headers: { "User-Agent": "DoNotForget" } });
-      if (!res.ok) return { available: false, error: `Version check failed (${res.status})` };
-      const data = await res.json();
-      const latest = (data.tag_name || "").replace(/^v/, "");
-      let current = app.getVersion();
-      for (const p of [path.join(__dirname, "../../../package.json"), path.join(app.getAppPath(), "package.json")]) {
-        try {
-          const v = JSON.parse(require("fs").readFileSync(p, "utf-8")).version;
-          if (v && !v.startsWith("35.")) { current = v; break; }
-        } catch {}
-      }
-      if (!latest) return { available: false, error: "No version info found" };
-      console.log(`[update-check] current=${current} latest=${latest}`);
+      const result = await autoUpdater.checkForUpdates();
+      if (!result) return { available: false };
+      const current = autoUpdater.currentVersion.version;
+      const latest = result.updateInfo.version;
       const isNewer = latest.localeCompare(current, undefined, { numeric: true, sensitivity: "base" }) > 0;
-      const dmgAsset = (data.assets || []).find((a: any) => a.name.endsWith(".dmg") && a.name.includes("arm64"));
-      return {
-        available: isNewer,
-        currentVersion: current,
-        latestVersion: latest,
-        releaseUrl: data.html_url || `https://github.com/treadiehq/donotforget/releases/tag/v${latest}`,
-        downloadUrl: dmgAsset?.browser_download_url || data.html_url || null
-      };
+      return { available: isNewer, currentVersion: current, latestVersion: latest };
     } catch (err: any) {
       return { available: false, error: err.message || "Network error" };
     }
+  });
+
+  ipcMain.handle("app:install-update", () => {
+    autoUpdater.quitAndInstall();
   });
 }
 
@@ -1083,6 +1071,23 @@ if (!gotSingleInstanceLock) {
     mainWindow.focus();
   });
 }
+
+// --- Auto-updater setup ---
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
+
+autoUpdater.on("update-available", (info) => {
+  mainWindow?.webContents.send("update:available", { version: info.version });
+});
+autoUpdater.on("update-downloaded", (info) => {
+  mainWindow?.webContents.send("update:downloaded", { version: info.version });
+});
+autoUpdater.on("download-progress", (progress) => {
+  mainWindow?.webContents.send("update:progress", { percent: Math.round(progress.percent) });
+});
+autoUpdater.on("error", (err) => {
+  console.error("[autoUpdater] error:", err.message);
+});
 
 app.whenReady().then(async () => {
   db = new SessionDb();
