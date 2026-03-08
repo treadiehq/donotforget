@@ -105,6 +105,33 @@ export class SessionDb {
         createdAt INTEGER NOT NULL
       );
     `);
+
+    this.initFts();
+  }
+
+  private initFts() {
+    // FTS5 virtual table over events.text for fast full-text search.
+    // content= makes it a content table (no data duplication) linked to the real events table.
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+        text,
+        content=events,
+        content_rowid=id,
+        tokenize='unicode61'
+      );
+
+      -- Keep the FTS index in sync with the events table via triggers.
+      CREATE TRIGGER IF NOT EXISTS events_fts_ai AFTER INSERT ON events BEGIN
+        INSERT INTO events_fts(rowid, text) VALUES (new.id, new.text);
+      END;
+      CREATE TRIGGER IF NOT EXISTS events_fts_ad AFTER DELETE ON events BEGIN
+        INSERT INTO events_fts(events_fts, rowid, text) VALUES ('delete', old.id, old.text);
+      END;
+      CREATE TRIGGER IF NOT EXISTS events_fts_au AFTER UPDATE ON events BEGIN
+        INSERT INTO events_fts(events_fts, rowid, text) VALUES ('delete', old.id, old.text);
+        INSERT INTO events_fts(rowid, text) VALUES (new.id, new.text);
+      END;
+    `);
   }
 
   createSession(title?: string): number {
@@ -332,19 +359,27 @@ export class SessionDb {
   }
 
   searchSessions(query: string): SessionRow[] {
+    // Use FTS5 for event text search (fast indexed) and LIKE only for title/draft (small tables).
     const like = `%${query}%`;
+    const ftsQuery = query.replace(/['"*]/g, " ").trim();
     return this.db
       .prepare(
         `SELECT DISTINCT s.id, s.createdAt, s.title, s.isShared, s.shareToken, s.shareUrl,
                 (SELECT substr(trim(e.text), 1, 120) FROM events e WHERE e.sessionId = s.id AND trim(e.text) != '' ORDER BY e.ts ASC LIMIT 1) as preview
          FROM sessions s
-         LEFT JOIN events e ON e.sessionId = s.id
-         LEFT JOIN session_drafts d ON d.sessionId = s.id
-         WHERE s.title LIKE ? OR e.text LIKE ? OR d.content LIKE ?
+         WHERE s.title LIKE ?
+            OR s.id IN (
+                 SELECT DISTINCT e.sessionId FROM events_fts
+                 JOIN events e ON e.id = events_fts.rowid
+                 WHERE events_fts MATCH ?
+               )
+            OR s.id IN (
+                 SELECT d.sessionId FROM session_drafts d WHERE d.content LIKE ?
+               )
          ORDER BY s.createdAt DESC
          LIMIT 20`
       )
-      .all(like, like, like) as SessionRow[];
+      .all(like, ftsQuery, like) as SessionRow[];
   }
 
   getAllSessionsContext(): string {

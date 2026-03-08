@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, dialog, clipboard, shell } from "electron";
+import { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, dialog, clipboard, shell, utilityProcess, type UtilityProcess } from "electron";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -7,14 +7,87 @@ import { existsSync } from "node:fs";
 import { WebSocketServer, WebSocket } from "ws";
 import { Tunnel as CfTunnel, bin as cfBin, install as cfInstall } from "cloudflared";
 import type { CapturePayload, AppState } from "../shared/types";
+import { IPC } from "../shared/types";
 import { SessionDb } from "./db";
 import { sessionToJson, sessionToMarkdown } from "./exporters";
 import { ShareServer } from "./shareServer";
 import { KEYCHAIN_KEYS, keychainGet, keychainSet, keychainDelete } from "./keychain";
 import { autoUpdater } from "electron-updater";
 
+interface TunnelHandle {
+  readonly url: string;
+  on(event: "disconnect" | "reconnect" | "expire" | "error", listener: (detail?: string) => void): this;
+  close(): Promise<void>;
+}
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { createTunnel } = require(require.resolve("private-connect").replace("dist/index.js", "dist/tunnel.js")) as {
+  createTunnel: (options: { port: number; host?: string }) => Promise<TunnelHandle>;
+};
+
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let cachedAppVersion: string | null = null;
+
+// ---------------------------------------------------------------------------
+// AI utility process
+// ---------------------------------------------------------------------------
+let aiProc: UtilityProcess | null = null;
+let aiProcReady = false;
+const aiPending = new Map<string, { resolve: (v: string) => void; reject: (e: Error) => void }>();
+
+function startAiWorker() {
+  if (aiProc) return;
+  const workerPath = path.join(__dirname, "aiWorker.cjs");
+  if (!existsSync(workerPath)) {
+    console.warn("[aiWorker] worker not found at", workerPath);
+    return;
+  }
+  aiProc = utilityProcess.fork(workerPath, [], { stdio: "pipe" });
+  aiProcReady = true;
+
+  aiProc.on("message", (msg: any) => {
+    const pending = aiPending.get(msg.id);
+    if (!pending) return;
+    aiPending.delete(msg.id);
+    if (msg.ok) {
+      pending.resolve(msg.result as string);
+    } else {
+      pending.reject(new Error(msg.error || "AI worker error"));
+    }
+  });
+
+  aiProc.on("exit", () => {
+    aiProc = null;
+    aiProcReady = false;
+    // Reject any in-flight requests
+    for (const [id, p] of aiPending) {
+      p.reject(new Error("AI worker exited unexpectedly"));
+      aiPending.delete(id);
+    }
+    // Restart unless the app is quitting
+    if (!isQuitting) {
+      setTimeout(() => startAiWorker(), 1000).unref();
+    }
+  });
+}
+
+function callAiWorker(
+  provider: string,
+  model: string,
+  apiKey: string,
+  systemPrompt: string,
+  userMessage: string,
+  maxTokens: number = 2048
+): Promise<string> {
+  if (!aiProc || !aiProcReady) {
+    return Promise.reject(new Error("AI worker not available"));
+  }
+  return new Promise((resolve, reject) => {
+    const id = randomBytes(8).toString("hex");
+    aiPending.set(id, { resolve, reject });
+    aiProc!.postMessage({ id, type: "callAi", provider, model, apiKey, systemPrompt, userMessage, maxTokens });
+  });
+}
 let helperProc: ChildProcess | null = null;
 let recording = false;
 let currentSessionId: number | null = null;
@@ -25,7 +98,7 @@ let shareServer!: ShareServer;
 const helperSockets = new Set<WebSocket>();
 let captureWss: WebSocketServer | null = null;
 const autoTitledSessions = new Set<number>();
-let tunnelChild: CfTunnel | ChildProcess | null = null;
+let tunnelChild: CfTunnel | ChildProcess | TunnelHandle | null = null;
 let tunnelUrl: string | null = null;
 let tunnelReconnecting = false;
 let activeTunnelProvider: "privateconnect" | "cloudflare" | null = null;
@@ -40,9 +113,9 @@ function getState(): AppState {
 
 function broadcastState() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send("state-changed", getState());
+  mainWindow.webContents.send(IPC.PUSH_STATE_CHANGED, getState());
   if (currentSessionId) {
-    mainWindow.webContents.send("events-updated", currentSessionId);
+    mainWindow.webContents.send(IPC.PUSH_EVENTS_UPDATED, currentSessionId);
   }
 }
 
@@ -153,6 +226,7 @@ function stopRecording() {
   }
 }
 
+/** Delegates all AI network calls to the utilityProcess worker off the main thread. */
 async function callAiProvider(
   provider: string,
   model: string,
@@ -161,67 +235,7 @@ async function callAiProvider(
   userMessage: string,
   maxTokens: number = 2048
 ): Promise<string> {
-  if (provider === "openai") {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage }
-        ],
-        max_completion_tokens: maxTokens
-      })
-    });
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`API error (${res.status}): ${err.slice(0, 200)}`);
-    }
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content || "No response from model.";
-  } else if (provider === "anthropic") {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userMessage }],
-        max_tokens: maxTokens
-      })
-    });
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`API error (${res.status}): ${err.slice(0, 200)}`);
-    }
-    const data = await res.json();
-    return data.content?.[0]?.text || "No response from model.";
-  } else if (provider === "google") {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ role: "user", parts: [{ text: userMessage }] }],
-          generationConfig: { maxOutputTokens: maxTokens }
-        })
-      }
-    );
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`API error (${res.status}): ${err.slice(0, 200)}`);
-    }
-    const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "No response from model.";
-  }
-  throw new Error("Unsupported provider.");
+  return callAiWorker(provider, model, apiKey, systemPrompt, userMessage, maxTokens);
 }
 
 const VALID_MODELS: Record<string, string[]> = {
@@ -542,79 +556,24 @@ async function ensureTunnel(): Promise<string> {
 }
 
 async function startPrivateConnectTunnel(): Promise<string> {
-  // Resolve private-connect entry point. In a packaged app it lives inside
-  // app.asar (a virtual fs), so we swap to the real app.asar.unpacked path
-  // which is a normal directory that a spawned child process can read from.
-  // All of private-connect's dependencies (socket.io-client etc.) are also
-  // unpacked via the asarUnpack config in package.json.
-  let binPath: string;
-  try {
-    binPath = require.resolve("private-connect/dist/index.js");
-    binPath = binPath.replace(/app\.asar([/\\])/, "app.asar.unpacked$1");
-  } catch {
-    throw new Error("private-connect module not found");
-  }
-
-  // process.execPath in a packaged Electron app is the Electron binary.
-  // ELECTRON_RUN_AS_NODE=1 makes it behave like plain Node.js.
-  // NODE_PATH points to the unpacked node_modules so deps like socket.io-client
-  // are found by the spawned child process.
-  const unpackedNodeModules = path.join(path.dirname(path.dirname(binPath)), "..");
-  const child = spawn(process.execPath, [binPath, "tunnel", "1455"], {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: {
-      ...process.env,
-      FORCE_COLOR: "0",
-      ELECTRON_RUN_AS_NODE: "1",
-      NODE_PATH: unpackedNodeModules
-    }
-  });
-  tunnelChild = child;
+  const handle = await createTunnel({ port: 1455 });
+  tunnelChild = handle;
   activeTunnelProvider = "privateconnect";
 
-  const url = await new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill();
-      reject(new Error("Private Connect tunnel URL timeout"));
-    }, 30000);
-
-    let output = "";
-    const urlPattern = /https:\/\/[a-z0-9-]+\.privateconnect\.co/;
-
-    const onData = (chunk: Buffer) => {
-      output += chunk.toString();
-      const match = output.match(urlPattern);
-      if (match) {
-        clearTimeout(timeout);
-        child.stdout?.removeListener("data", onData);
-        child.stderr?.removeListener("data", onErrData);
-        resolve(match[0]);
-      }
-    };
-    const onErrData = (chunk: Buffer) => {
-      output += chunk.toString();
-      const match = output.match(urlPattern);
-      if (match) {
-        clearTimeout(timeout);
-        child.stdout?.removeListener("data", onData);
-        child.stderr?.removeListener("data", onErrData);
-        resolve(match[0]);
-      }
-    };
-
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onErrData);
-    child.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-    child.on("exit", (code) => {
-      clearTimeout(timeout);
-      if (!tunnelUrl) reject(new Error(`Private Connect exited with code ${code}`));
-    });
+  handle.on("disconnect", () => {
+    tunnelUrl = null;
+    activeTunnelProvider = null;
   });
 
-  child.on("exit", () => {
+  handle.on("reconnect", () => {
+    const url = handle.url;
+    tunnelUrl = url;
+    activeTunnelProvider = "privateconnect";
+    db.updateAllShareUrls(url);
+    broadcastState();
+  });
+
+  handle.on("expire", () => {
     tunnelChild = null;
     tunnelUrl = null;
     activeTunnelProvider = null;
@@ -623,7 +582,7 @@ async function startPrivateConnectTunnel(): Promise<string> {
     }
   });
 
-  return url;
+  return handle.url;
 }
 
 async function reconnectTunnel() {
@@ -650,8 +609,10 @@ function closeTunnel() {
     activeTunnelProvider = null;
     if (c instanceof CfTunnel) {
       c.stop();
+    } else if ("close" in c && typeof c.close === "function") {
+      c.close();
     } else {
-      c.kill();
+      (c as ChildProcess).kill();
     }
   }
 }
@@ -814,53 +775,53 @@ function startHelper(): { ok: boolean; message: string } {
 }
 
 async function initIpc() {
-  ipcMain.handle("state:get", () => getState());
-  ipcMain.handle("sessions:list", () => db.listSessions());
-  ipcMain.handle("session:create", () => createNewSession());
-  ipcMain.handle("session:set-active", (_event, sessionId: number | null) => setActiveSession(sessionId));
-  ipcMain.handle("session:delete", (_event, sessionId: number) => deleteSession(sessionId));
-  ipcMain.handle("session:rename", (_event, sessionId: number, title: string) => {
+  ipcMain.handle(IPC.STATE_GET, () => getState());
+  ipcMain.handle(IPC.SESSIONS_LIST, () => db.listSessions());
+  ipcMain.handle(IPC.SESSION_CREATE, () => createNewSession());
+  ipcMain.handle(IPC.SESSION_SET_ACTIVE, (_event, sessionId: number | null) => setActiveSession(sessionId));
+  ipcMain.handle(IPC.SESSION_DELETE, (_event, sessionId: number) => deleteSession(sessionId));
+  ipcMain.handle(IPC.SESSION_RENAME, (_event, sessionId: number, title: string) => {
     const ok = db.renameSession(sessionId, title);
     if (ok) broadcastState();
     return ok;
   });
-  ipcMain.handle("events:list", (_event, sessionId: number) => db.getEvents(sessionId));
-  ipcMain.handle("recording:toggle", (_event, targetSessionId?: number | null) => {
+  ipcMain.handle(IPC.EVENTS_LIST, (_event, sessionId: number) => db.getEvents(sessionId));
+  ipcMain.handle(IPC.RECORDING_TOGGLE, (_event, targetSessionId?: number | null) => {
     toggleRecording(targetSessionId);
     return getState();
   });
-  ipcMain.handle("export:markdown", async (_event, sessionId: number) => exportSession(sessionId, "md"));
-  ipcMain.handle("export:json", async (_event, sessionId: number) => exportSession(sessionId, "json"));
-  ipcMain.handle("session:copy", (_event, sessionId: number) => copySession(sessionId));
-  ipcMain.handle("share:create", async (_event, sessionId: number) => {
+  ipcMain.handle(IPC.EXPORT_MARKDOWN, async (_event, sessionId: number) => exportSession(sessionId, "md"));
+  ipcMain.handle(IPC.EXPORT_JSON, async (_event, sessionId: number) => exportSession(sessionId, "json"));
+  ipcMain.handle(IPC.SESSION_COPY, (_event, sessionId: number) => copySession(sessionId));
+  ipcMain.handle(IPC.SHARE_CREATE, async (_event, sessionId: number) => {
     const baseUrl = await ensureTunnel();
     const token = randomBytes(18).toString("base64url");
     const fullUrl = `${baseUrl}/${token}`;
     db.setShareToken(sessionId, token, fullUrl);
     return fullUrl;
   });
-  ipcMain.handle("share:revoke", async (_event, sessionId: number) => {
+  ipcMain.handle(IPC.SHARE_REVOKE, async (_event, sessionId: number) => {
     db.setShareToken(sessionId, null);
     if (!db.hasSharedSessions()) {
       await closeTunnel();
     }
     return true;
   });
-  ipcMain.handle("session:save-draft", (_event, sessionId: number, content: string) => {
+  ipcMain.handle(IPC.SESSION_SAVE_DRAFT, (_event, sessionId: number, content: string) => {
     db.saveDraft(sessionId, content);
     return true;
   });
-  ipcMain.handle("session:get-draft", (_event, sessionId: number) => {
+  ipcMain.handle(IPC.SESSION_GET_DRAFT, (_event, sessionId: number) => {
     return db.getDraft(sessionId);
   });
-  ipcMain.handle("helper:start", () => startHelper());
-  ipcMain.handle("accessibility:open-settings", async () => {
+  ipcMain.handle(IPC.HELPER_START, () => startHelper());
+  ipcMain.handle(IPC.ACCESSIBILITY_OPEN, async () => {
     await shell.openExternal(
       "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
     );
   });
-  ipcMain.handle("sessions:search", (_event, query: string) => db.searchSessions(query));
-  ipcMain.handle("settings:get-all", async () => {
+  ipcMain.handle(IPC.SESSIONS_SEARCH, (_event, query: string) => db.searchSessions(query));
+  ipcMain.handle(IPC.SETTINGS_GET_ALL, async () => {
     const s = db.getAllSettings();
     // Keychain-backed keys: remove SQLite value (migration may have left a stale row) and
     // replace with a sentinel so the UI knows a key is configured without seeing the raw value.
@@ -871,7 +832,7 @@ async function initIpc() {
     }
     return s;
   });
-  ipcMain.handle("settings:set", async (_event, key: string, value: string) => {
+  ipcMain.handle(IPC.SETTINGS_SET, async (_event, key: string, value: string) => {
     if (KEYCHAIN_KEYS.has(key)) {
       // Never persist API keys in SQLite — store in Keychain only
       if (value && value !== "__configured__") {
@@ -894,23 +855,23 @@ async function initIpc() {
         .catch(() => {});
     }
   });
-  ipcMain.handle("data:clear-all", () => {
+  ipcMain.handle(IPC.DATA_CLEAR_ALL, () => {
     db.clearAllData();
     broadcastState();
   });
-  ipcMain.handle("daily-summary:get", async (_event, dateStr: string) => {
+  ipcMain.handle(IPC.DAILY_SUMMARY_GET, async (_event, dateStr: string) => {
     const existing = db.getDailySummary(dateStr);
     if (existing) return existing;
     return null;
   });
-  ipcMain.handle("daily-summary:generate", async (_event, dateStr: string) => {
+  ipcMain.handle(IPC.DAILY_SUMMARY_GENERATE, async (_event, dateStr: string) => {
     const content = await generateDailySummary(dateStr);
     return content ? db.getDailySummary(dateStr) : null;
   });
-  ipcMain.handle("daily-summaries:list", () => {
+  ipcMain.handle(IPC.DAILY_SUMMARIES_LIST, () => {
     return db.listDailySummaries();
   });
-  ipcMain.handle("ai:chat", async (_event, message: string, sessionId: number | null) => {
+  ipcMain.handle(IPC.AI_CHAT, async (_event, message: string, sessionId: number | null) => {
     const settings = db.getAllSettings();
     if (settings.aiEnabled !== "true") return "AI is not enabled. Go to Settings → AI Behavior to enable.";
     const apiKey = await keychainGet("aiApiKey");
@@ -975,7 +936,7 @@ Rules:
     }
   });
 
-  ipcMain.handle("ai:enhance", async (_event, sessionId: number) => {
+  ipcMain.handle(IPC.AI_ENHANCE, async (_event, sessionId: number) => {
     const settings = db.getAllSettings();
     if (settings.aiEnabled !== "true") return "AI is not enabled.";
     if (settings.aiContentEnhancement !== "true") return "Content Enhancement is not enabled. Turn it on in Settings → AI Behavior.";
@@ -1028,21 +989,9 @@ Format your response as:
     }
   });
 
-  ipcMain.handle("app:get-version", () => {
-    const candidates = [
-      path.join(__dirname, "../../../package.json"),
-      path.join(app.getAppPath(), "package.json")
-    ];
-    for (const p of candidates) {
-      try {
-        const pkg = JSON.parse(require("fs").readFileSync(p, "utf-8"));
-        if (pkg.version && !pkg.version.startsWith("35.")) return pkg.version;
-      } catch {}
-    }
-    return app.getVersion();
-  });
+  ipcMain.handle(IPC.APP_GET_VERSION, () => cachedAppVersion ?? app.getVersion());
 
-  ipcMain.handle("app:check-for-updates", async () => {
+  ipcMain.handle(IPC.APP_CHECK_FOR_UPDATES, async () => {
     try {
       const result = await autoUpdater.checkForUpdates();
       if (!result) return { available: false };
@@ -1055,7 +1004,7 @@ Format your response as:
     }
   });
 
-  ipcMain.handle("app:install-update", () => {
+  ipcMain.handle(IPC.APP_INSTALL_UPDATE, () => {
     autoUpdater.quitAndInstall();
   });
 }
@@ -1077,7 +1026,7 @@ autoUpdater.autoDownload = false; // ask the user first
 autoUpdater.autoInstallOnAppQuit = true;
 
 autoUpdater.on("update-available", async (info) => {
-  mainWindow?.webContents.send("update:available", { version: info.version });
+  mainWindow?.webContents.send(IPC.PUSH_UPDATE_AVAILABLE, { version: info.version });
 
   const { response } = await dialog.showMessageBox({
     type: "info",
@@ -1102,13 +1051,13 @@ autoUpdater.on("update-available", async (info) => {
 
 autoUpdater.on("download-progress", (progress) => {
   const percent = Math.round(progress.percent);
-  mainWindow?.webContents.send("update:progress", { percent });
+  mainWindow?.webContents.send(IPC.PUSH_UPDATE_PROGRESS, { percent });
   mainWindow?.setProgressBar(progress.percent / 100);
 });
 
 autoUpdater.on("update-downloaded", async (info) => {
   mainWindow?.setProgressBar(-1); // clear progress bar
-  mainWindow?.webContents.send("update:downloaded", { version: info.version });
+  mainWindow?.webContents.send(IPC.PUSH_UPDATE_DOWNLOADED, { version: info.version });
 
   const { response } = await dialog.showMessageBox({
     type: "info",
@@ -1130,6 +1079,19 @@ autoUpdater.on("error", (err) => {
 });
 
 app.whenReady().then(async () => {
+  // Resolve the app version once at startup rather than on every IPC call.
+  const versionCandidates = [
+    path.join(__dirname, "../../../package.json"),
+    path.join(app.getAppPath(), "package.json")
+  ];
+  for (const p of versionCandidates) {
+    try {
+      const pkg = JSON.parse(require("fs").readFileSync(p, "utf-8"));
+      if (pkg.version && !pkg.version.startsWith("35.")) { cachedAppVersion = pkg.version; break; }
+    } catch {}
+  }
+  if (!cachedAppVersion) cachedAppVersion = app.getVersion();
+
   db = new SessionDb();
   shareServer = new ShareServer(db);
   const savedHandle = db.getSetting("handle");
@@ -1146,12 +1108,18 @@ app.whenReady().then(async () => {
     db.deleteSetting("aiApiKey");
   }
 
+  startAiWorker();
   await initIpc();
   createWindow();
   createTray();
   startCaptureSocketServer();
   startHelper();
   scheduleDailySummary();
+
+  // Delay the initial update check so it doesn't compete with startup I/O.
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch(() => {});
+  }, 15_000).unref();
 
   if (db.getSetting("dailyRecapEnabled") !== "false") {
     const yesterday = yesterdayDateStr();
@@ -1166,5 +1134,9 @@ app.on("before-quit", () => {
   closeTunnel();
   if (helperProc && !helperProc.killed) {
     helperProc.kill();
+  }
+  if (aiProc) {
+    aiProc.kill();
+    aiProc = null;
   }
 });
