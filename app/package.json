@@ -14,7 +14,7 @@
     "build:share-css": "tailwindcss -i ./src/share/share.input.css -o ./src/share/share.generated.css --minify",
     "build:main": "tsc -p tsconfig.main.json",
     "build:helper": "cd ../native-helper && swift build -c release && mkdir -p ../app/build/helper && cp .build/release/SessionCaptureHelper ../app/build/helper/",
-    "package": "bun run build && bun run build:helper && electron-builder --mac",
+    "package": "bun run build && bun run build:helper && electron-builder --mac --publish never",
     "start": "env -u ELECTRON_RUN_AS_NODE electron ./dist/main/main/main.js",
     "rebuild:native": "env -u ELECTRON_RUN_AS_NODE electron-rebuild -f -w better-sqlite3,keytar"
   },
