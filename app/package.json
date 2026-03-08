@@ -1,6 +1,6 @@
 {
   "name": "do-not-forget",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "private": true,
   "main": "dist/main/main/main.js",
   "scripts": {

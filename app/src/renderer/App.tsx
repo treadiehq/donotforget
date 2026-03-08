@@ -104,7 +104,7 @@ export function App() {
   const [dailyRecapEnabled, setDailyRecapEnabled] = useState(true);
   const [settingsVersion, setSettingsVersion] = useState(0);
   const [draftVersion, setDraftVersion] = useState(0);
-  const [updateAvailable, setUpdateAvailable] = useState<{ version: string; url: string } | null>(null);
+  const [updateAvailable, setUpdateAvailable] = useState<{ version: string; ready: boolean } | null>(null);
   const titleFocused = useRef(false);
   const titleSaveTimer = useRef<ReturnType<typeof setTimeout>>();
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -175,15 +175,12 @@ export function App() {
     }).catch(() => {});
     refreshSessions();
 
-    window.sessionCaptureApi.checkForUpdates().then((result) => {
-      if (result.available && result.latestVersion) {
-        setUpdateAvailable({
-          version: result.latestVersion,
-          url: result.downloadUrl || result.releaseUrl || "https://github.com/treadiehq/donotforget/releases"
-        });
-      }
-    }).catch(() => {});
-
+    const offAvailable = window.sessionCaptureApi.onUpdateAvailable((info) => {
+      setUpdateAvailable({ version: info.version, ready: false });
+    });
+    const offDownloaded = window.sessionCaptureApi.onUpdateDownloaded((info) => {
+      setUpdateAvailable({ version: info.version, ready: true });
+    });
     const offState = window.sessionCaptureApi.onStateChanged(async (nextState) => {
       const justStartedRecording = nextState.recording && !wasRecordingRef.current;
       wasRecordingRef.current = nextState.recording;
@@ -201,6 +198,8 @@ export function App() {
     });
 
     return () => {
+      offAvailable();
+      offDownloaded();
       offState();
       offEvents();
     };
@@ -338,9 +337,13 @@ export function App() {
               {updateAvailable && (
                 <div className="update-banner">
                   <span>v{updateAvailable.version} is available</span>
-                  <button onClick={() => { window.open(updateAvailable.url, "_blank"); }}>
-                    Download
-                  </button>
+                  {updateAvailable.ready ? (
+                    <button onClick={() => window.sessionCaptureApi.installUpdate()}>
+                      Restart to install
+                    </button>
+                  ) : (
+                    <button disabled>Downloading…</button>
+                  )}
                   <button className="update-banner-dismiss" onClick={() => setUpdateAvailable(null)} aria-label="Dismiss">
                     &times;
                   </button>
