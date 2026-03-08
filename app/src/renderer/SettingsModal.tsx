@@ -64,6 +64,11 @@ export function SettingsModal({ onClose, onAiEnabledChange, onDataCleared }: Set
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const pendingChanges = useRef<Record<string, string>>({});
 
+  // Update state lifted here so it survives tab switches
+  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "latest" | "available" | "downloading" | "ready" | "error">("idle");
+  const [updateVersion, setUpdateVersion] = useState<string | undefined>();
+  const [downloadPercent, setDownloadPercent] = useState(0);
+
   useEffect(() => {
     window.sessionCaptureApi.getSettings().then((s) => {
       setSettings(s);
@@ -87,6 +92,27 @@ export function SettingsModal({ onClose, onAiEnabledChange, onDataCleared }: Set
     },
     [onClose]
   );
+
+  // Subscribe to updater events at modal level so state persists across tab switches
+  useEffect(() => {
+    const offAvailable = window.sessionCaptureApi.onUpdateAvailable((info) => {
+      setUpdateVersion(info.version);
+      setUpdateStatus("available");
+    });
+    const offProgress = window.sessionCaptureApi.onUpdateProgress((info) => {
+      setDownloadPercent(Math.round(info.percent));
+      setUpdateStatus("downloading");
+    });
+    const offDownloaded = window.sessionCaptureApi.onUpdateDownloaded((info) => {
+      setUpdateVersion(info.version);
+      setUpdateStatus("ready");
+    });
+    const offError = window.sessionCaptureApi.onUpdateError(() => {
+      setUpdateStatus("error");
+      setDownloadPercent(0);
+    });
+    return () => { offAvailable(); offProgress(); offDownloaded(); offError(); };
+  }, []);
 
   const updateSetting = useCallback((key: string, value: string) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -147,7 +173,15 @@ export function SettingsModal({ onClose, onAiEnabledChange, onDataCleared }: Set
           {tab === "capture" && <CaptureRulesTab />}
           {tab === "intelligence" && <AppIntelligenceTab />}
           {tab === "automations" && <AutomationsTab />}
-          {tab === "about" && <AboutTab />}
+          {tab === "about" && (
+            <AboutTab
+              updateStatus={updateStatus}
+              updateVersion={updateVersion}
+              downloadPercent={downloadPercent}
+              onStatusChange={setUpdateStatus}
+              onVersionChange={setUpdateVersion}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -1061,44 +1095,39 @@ function AutomationsTab() {
   );
 }
 
-function AboutTab() {
-  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "latest" | "available" | "downloading" | "ready" | "error">("idle");
+function AboutTab({
+  updateStatus,
+  updateVersion,
+  downloadPercent,
+  onStatusChange,
+  onVersionChange,
+}: {
+  updateStatus: "idle" | "checking" | "latest" | "available" | "downloading" | "ready" | "error";
+  updateVersion: string | undefined;
+  downloadPercent: number;
+  onStatusChange: (s: "idle" | "checking" | "latest" | "available" | "downloading" | "ready" | "error") => void;
+  onVersionChange: (v: string) => void;
+}) {
   const [version, setVersion] = useState("0.1.0");
-  const [latestVersion, setLatestVersion] = useState<string | undefined>();
-  const [downloadPercent, setDownloadPercent] = useState(0);
 
   useEffect(() => {
     window.sessionCaptureApi.getVersion().then(setVersion).catch(() => {});
-
-    const offAvailable = window.sessionCaptureApi.onUpdateAvailable((info) => {
-      setLatestVersion(info.version);
-      setUpdateStatus("available");
-    });
-    const offProgress = window.sessionCaptureApi.onUpdateProgress((info) => {
-      setDownloadPercent(info.percent);
-      setUpdateStatus("downloading");
-    });
-    const offDownloaded = window.sessionCaptureApi.onUpdateDownloaded((info) => {
-      setLatestVersion(info.version);
-      setUpdateStatus("ready");
-    });
-    return () => { offAvailable(); offProgress(); offDownloaded(); };
   }, []);
 
   const checkForUpdates = async () => {
-    setUpdateStatus("checking");
+    onStatusChange("checking");
     try {
       const result = await window.sessionCaptureApi.checkForUpdates();
       if (result.error) {
-        setUpdateStatus("error");
+        onStatusChange("error");
       } else if (result.available) {
-        setLatestVersion(result.latestVersion);
-        setUpdateStatus("downloading");
+        if (result.latestVersion) onVersionChange(result.latestVersion);
+        onStatusChange("downloading");
       } else {
-        setUpdateStatus("latest");
+        onStatusChange("latest");
       }
     } catch {
-      setUpdateStatus("error");
+      onStatusChange("error");
     }
   };
 
@@ -1136,15 +1165,22 @@ function AboutTab() {
               <polyline points="7 10 12 15 17 10" />
               <line x1="12" y1="15" x2="12" y2="3" />
             </svg>
-            Restart to install v{latestVersion}
+            Restart to install v{updateVersion}
           </button>
         ) : updateStatus === "downloading" ? (
-          <button className="about-update-btn" disabled>
-            <svg className="about-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-            </svg>
-            {downloadPercent > 0 ? `Downloading ${downloadPercent}%` : `Downloading v${latestVersion}…`}
-          </button>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+            <button className="about-update-btn" disabled>
+              <svg className="about-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+              {downloadPercent > 0 ? `Downloading v${updateVersion}… ${downloadPercent}%` : `Downloading v${updateVersion}…`}
+            </button>
+            {downloadPercent > 0 && (
+              <div style={{ width: 180, height: 3, borderRadius: 2, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${downloadPercent}%`, background: "#818cf8", borderRadius: 2, transition: "width 0.3s" }} />
+              </div>
+            )}
+          </div>
         ) : updateStatus === "available" ? (
           <button className="about-update-btn about-update-available" disabled>
             <svg className="about-update-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1152,7 +1188,7 @@ function AboutTab() {
               <polyline points="7 10 12 15 17 10" />
               <line x1="12" y1="15" x2="12" y2="3" />
             </svg>
-            v{latestVersion} available
+            v{updateVersion} available
           </button>
         ) : (
           <button

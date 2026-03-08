@@ -64,6 +64,7 @@ export const IPC = {
   PUSH_UPDATE_AVAILABLE: "update:available",
   PUSH_UPDATE_PROGRESS: "update:progress",
   PUSH_UPDATE_DOWNLOADED: "update:downloaded",
+  PUSH_UPDATE_ERROR: "update:error",
   PUSH_RELATED_CAPTURES: "related-captures",
 } as const;
 

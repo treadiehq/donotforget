@@ -65,6 +65,7 @@ declare global {
       onUpdateAvailable: (listener: (info: { version: string }) => void) => () => void;
       onUpdateDownloaded: (listener: (info: { version: string }) => void) => () => void;
       onUpdateProgress: (listener: (info: { percent: number }) => void) => () => void;
+      onUpdateError: (listener: (info: { message: string }) => void) => () => void;
       onRelatedCaptures: (listener: (captures: RelatedCapture[]) => void) => () => void;
     };
   }

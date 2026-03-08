@@ -77,6 +77,11 @@ const api = {
     ipcRenderer.on(IPC.PUSH_UPDATE_PROGRESS, wrapped);
     return () => ipcRenderer.off(IPC.PUSH_UPDATE_PROGRESS, wrapped);
   },
+  onUpdateError: (listener: (info: { message: string }) => void) => {
+    const wrapped = (_event: unknown, info: { message: string }) => listener(info);
+    ipcRenderer.on(IPC.PUSH_UPDATE_ERROR, wrapped);
+    return () => ipcRenderer.off(IPC.PUSH_UPDATE_ERROR, wrapped);
+  },
   onRelatedCaptures: (listener: (captures: RelatedCapture[]) => void) => {
     const wrapped = (_event: unknown, captures: RelatedCapture[]) => listener(captures);
     ipcRenderer.on(IPC.PUSH_RELATED_CAPTURES, wrapped);

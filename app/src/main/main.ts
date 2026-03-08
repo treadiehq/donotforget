@@ -1341,6 +1341,8 @@ autoUpdater.on("update-downloaded", async (info) => {
 
 autoUpdater.on("error", (err) => {
   console.error("[autoUpdater] error:", err.message);
+  mainWindow?.setProgressBar(-1);
+  mainWindow?.webContents.send(IPC.PUSH_UPDATE_ERROR, { message: err.message });
 });
 
 app.whenReady().then(async () => {

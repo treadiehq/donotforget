@@ -576,7 +576,7 @@ export function App() {
             <section className="list-view">
               {updateAvailable && (
                 <div className="update-banner">
-                  <span>v{updateAvailable.version} is available</span>
+                  <span>A new version v{updateAvailable.version} is available</span>
                   {updateAvailable.ready ? (
                     <button onClick={() => window.sessionCaptureApi.installUpdate()}>
                       Restart to install
