@@ -1,4 +1,5 @@
 import { defineConfig } from "tsdown";
+import { copyFileSync } from "node:fs";
 
 export default defineConfig([
   {
@@ -34,6 +35,13 @@ export default defineConfig([
     },
     sourcemap: true,
     clean: false,
+    hooks: {
+      // Electron's createWindow() loads "preload.js" by convention, but tsdown
+      // emits "preload.cjs". Keep preload.js in sync after every build.
+      "build:done": () => {
+        copyFileSync("dist/main/main/preload.cjs", "dist/main/main/preload.js");
+      },
+    },
   },
   {
     entry: { aiWorker: "src/main/aiWorker.ts" },

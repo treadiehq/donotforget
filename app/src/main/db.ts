@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import path from "node:path";
 import { app } from "electron";
-import type { CapturePayload, EventRow, SessionRow } from "../shared/types";
+import type { CapturePayload, EventRow, SessionRow, CaptureRule, AppTag, WebhookConfig } from "../shared/types";
 
 export interface InsertCaptureResult {
   kind: "inserted" | "updated" | "ignored";
@@ -94,7 +94,11 @@ export class SessionDb {
 
     const cols = this.db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "shareUrl")) {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN shareUrl TEXT");
+      try {
+        this.db.exec("ALTER TABLE sessions ADD COLUMN shareUrl TEXT");
+      } catch {
+        // Column may already exist; safe to ignore
+      }
     }
 
     this.db.exec(`
@@ -105,6 +109,73 @@ export class SessionDb {
         createdAt INTEGER NOT NULL
       );
     `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS capture_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        appPattern TEXT NOT NULL,
+        action TEXT NOT NULL DEFAULT 'allow',
+        minWords INTEGER NOT NULL DEFAULT 0,
+        extractCitations INTEGER NOT NULL DEFAULT 0,
+        note TEXT,
+        createdAt INTEGER NOT NULL
+      );
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS app_tags (
+        appName TEXT PRIMARY KEY,
+        tag TEXT NOT NULL,
+        updatedAt INTEGER NOT NULL
+      );
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS semantic_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sourceEventId INTEGER NOT NULL,
+        targetEventId INTEGER NOT NULL,
+        score REAL NOT NULL,
+        createdAt INTEGER NOT NULL
+      );
+    `);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sem_source ON semantic_links(sourceEventId);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sem_target ON semantic_links(targetEventId);`);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS webhooks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        trigger TEXT NOT NULL DEFAULT 'session_end',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        createdAt INTEGER NOT NULL
+      );
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS media_attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sessionId INTEGER NOT NULL,
+        filename TEXT NOT NULL,
+        mimeType TEXT NOT NULL,
+        dataB64 TEXT NOT NULL,
+        caption TEXT,
+        aiDescription TEXT,
+        createdAt INTEGER NOT NULL,
+        FOREIGN KEY (sessionId) REFERENCES sessions(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Safe column migration — ALTER TABLE cannot run inside a transaction
+    const eventCols = this.db.prepare("PRAGMA table_info(events)").all() as Array<{ name: string }>;
+    if (!eventCols.some((c) => c.name === "appTag")) {
+      try {
+        this.db.exec("ALTER TABLE events ADD COLUMN appTag TEXT");
+      } catch {
+        // Column may already exist from a concurrent migration attempt; safe to ignore
+      }
+    }
 
     this.initFts();
   }
@@ -459,5 +530,171 @@ export class SessionDb {
     return this.db
       .prepare("SELECT date, content, isAi, createdAt FROM daily_summaries ORDER BY date DESC LIMIT 30")
       .all() as Array<{ date: string; content: string; isAi: number; createdAt: number }>;
+  }
+
+  // ── Capture Rules ──────────────────────────────────────────────────────────
+
+  listCaptureRules(): CaptureRule[] {
+    return this.db.prepare("SELECT * FROM capture_rules ORDER BY createdAt ASC").all() as CaptureRule[];
+  }
+
+  addCaptureRule(rule: Omit<CaptureRule, "id" | "createdAt">): number {
+    const res = this.db
+      .prepare(
+        "INSERT INTO capture_rules(appPattern, action, minWords, extractCitations, note, createdAt) VALUES(?,?,?,?,?,?)"
+      )
+      .run(rule.appPattern, rule.action, rule.minWords ?? 0, rule.extractCitations ? 1 : 0, rule.note ?? null, Date.now());
+    return Number(res.lastInsertRowid);
+  }
+
+  updateCaptureRule(id: number, rule: Partial<Omit<CaptureRule, "id" | "createdAt">>): boolean {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    if (rule.appPattern !== undefined) { fields.push("appPattern = ?"); values.push(rule.appPattern); }
+    if (rule.action !== undefined) { fields.push("action = ?"); values.push(rule.action); }
+    if (rule.minWords !== undefined) { fields.push("minWords = ?"); values.push(rule.minWords); }
+    if (rule.extractCitations !== undefined) { fields.push("extractCitations = ?"); values.push(rule.extractCitations ? 1 : 0); }
+    if (rule.note !== undefined) { fields.push("note = ?"); values.push(rule.note); }
+    if (!fields.length) return false;
+    values.push(id);
+    return this.db.prepare(`UPDATE capture_rules SET ${fields.join(", ")} WHERE id = ?`).run(...values).changes > 0;
+  }
+
+  deleteCaptureRule(id: number): boolean {
+    return this.db.prepare("DELETE FROM capture_rules WHERE id = ?").run(id).changes > 0;
+  }
+
+  /** Check capture rules for a given app name. Returns the matching rule or null (allow by default). */
+  checkCaptureRule(appName: string, wordCount: number): { allowed: boolean; extractCitations: boolean } {
+    const rules = this.listCaptureRules();
+    const lower = appName.toLowerCase();
+    for (const rule of rules) {
+      const pat = rule.appPattern.toLowerCase();
+      const matches = pat === "*" || lower.includes(pat) || lower === pat;
+      if (matches) {
+        if (rule.action === "block") return { allowed: false, extractCitations: false };
+        if (rule.action === "allow") {
+          const meetsMinWords = wordCount >= (rule.minWords ?? 0);
+          return { allowed: meetsMinWords, extractCitations: !!rule.extractCitations };
+        }
+      }
+    }
+    return { allowed: true, extractCitations: false };
+  }
+
+  // ── App Tags ───────────────────────────────────────────────────────────────
+
+  listAppTags(): AppTag[] {
+    return this.db.prepare("SELECT appName, tag, updatedAt FROM app_tags ORDER BY appName ASC").all() as AppTag[];
+  }
+
+  setAppTag(appName: string, tag: string): void {
+    this.db
+      .prepare(
+        "INSERT INTO app_tags(appName, tag, updatedAt) VALUES(?,?,?) ON CONFLICT(appName) DO UPDATE SET tag = excluded.tag, updatedAt = excluded.updatedAt"
+      )
+      .run(appName, tag, Date.now());
+  }
+
+  deleteAppTag(appName: string): void {
+    this.db.prepare("DELETE FROM app_tags WHERE appName = ?").run(appName);
+  }
+
+  getAppTag(appName: string): string | null {
+    const row = this.db.prepare("SELECT tag FROM app_tags WHERE appName = ?").get(appName) as { tag: string } | undefined;
+    return row?.tag ?? null;
+  }
+
+  /** Infer a default tag from the app name if no explicit tag set. */
+  inferAppTag(appName: string): string {
+    const explicit = this.getAppTag(appName);
+    if (explicit) return explicit;
+    const lower = appName.toLowerCase();
+    if (/xcode|vscode|vim|nvim|emacs|sublime|cursor|android studio|intellij|pycharm|webstorm/.test(lower)) return "code";
+    if (/slack|teams|discord|zoom|telegram|messages|whatsapp|signal|mail|outlook|gmail/.test(lower)) return "conversation";
+    if (/safari|chrome|firefox|arc|edge|brave/.test(lower)) return "research";
+    if (/terminal|iterm|warp|kitty|alacritty|hyper|ghostty/.test(lower)) return "terminal";
+    if (/preview|adobe|acrobat|pdf/.test(lower)) return "pdf";
+    if (/keynote|powerpoint|slides/.test(lower)) return "presentation";
+    if (/notes|notion|obsidian|bear|logseq|roam|craft/.test(lower)) return "notes";
+    return "general";
+  }
+
+  // ── Semantic Links ─────────────────────────────────────────────────────────
+
+  addSemanticLinks(links: Array<{ sourceEventId: number; targetEventId: number; score: number }>): void {
+    const stmt = this.db.prepare(
+      "INSERT OR IGNORE INTO semantic_links(sourceEventId, targetEventId, score, createdAt) VALUES(?,?,?,?)"
+    );
+    const tx = this.db.transaction(() => {
+      for (const l of links) stmt.run(l.sourceEventId, l.targetEventId, l.score, Date.now());
+    });
+    tx();
+  }
+
+  getRelatedEvents(eventId: number, limit = 5): Array<{ eventId: number; score: number; text: string; sessionId: number; sessionTitle: string; ts: number }> {
+    return this.db.prepare(`
+      SELECT sl.targetEventId as eventId, sl.score, e.text, e.sessionId, e.ts, s.title as sessionTitle
+      FROM semantic_links sl
+      JOIN events e ON e.id = sl.targetEventId
+      JOIN sessions s ON s.id = e.sessionId
+      WHERE sl.sourceEventId = ?
+      ORDER BY sl.score DESC LIMIT ?
+    `).all(eventId, limit) as Array<{ eventId: number; score: number; text: string; sessionId: number; sessionTitle: string; ts: number }>;
+  }
+
+  getRecentEventsForSimilarity(excludeSessionId: number, limit = 100): Array<{ id: number; text: string; sessionId: number; sessionTitle: string; ts: number }> {
+    return this.db.prepare(`
+      SELECT e.id, e.text, e.sessionId, e.ts, s.title as sessionTitle
+      FROM events e JOIN sessions s ON s.id = e.sessionId
+      WHERE e.sessionId != ? AND length(e.text) > 30
+      ORDER BY e.ts DESC LIMIT ?
+    `).all(excludeSessionId, limit) as Array<{ id: number; text: string; sessionId: number; sessionTitle: string; ts: number }>;
+  }
+
+  // ── Webhooks ───────────────────────────────────────────────────────────────
+
+  listWebhooks(): WebhookConfig[] {
+    return this.db.prepare("SELECT * FROM webhooks ORDER BY createdAt ASC").all() as WebhookConfig[];
+  }
+
+  addWebhook(hook: Omit<WebhookConfig, "id" | "createdAt">): number {
+    const res = this.db
+      .prepare("INSERT INTO webhooks(name, url, trigger, enabled, createdAt) VALUES(?,?,?,?,?)")
+      .run(hook.name, hook.url, hook.trigger, hook.enabled ? 1 : 0, Date.now());
+    return Number(res.lastInsertRowid);
+  }
+
+  updateWebhook(id: number, hook: Partial<Omit<WebhookConfig, "id" | "createdAt">>): boolean {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    if (hook.name !== undefined) { fields.push("name = ?"); values.push(hook.name); }
+    if (hook.url !== undefined) { fields.push("url = ?"); values.push(hook.url); }
+    if (hook.trigger !== undefined) { fields.push("trigger = ?"); values.push(hook.trigger); }
+    if (hook.enabled !== undefined) { fields.push("enabled = ?"); values.push(hook.enabled ? 1 : 0); }
+    if (!fields.length) return false;
+    values.push(id);
+    return this.db.prepare(`UPDATE webhooks SET ${fields.join(", ")} WHERE id = ?`).run(...values).changes > 0;
+  }
+
+  deleteWebhook(id: number): boolean {
+    return this.db.prepare("DELETE FROM webhooks WHERE id = ?").run(id).changes > 0;
+  }
+
+  // ── Media Attachments ──────────────────────────────────────────────────────
+
+  addMediaAttachment(sessionId: number, filename: string, mimeType: string, dataB64: string, caption?: string, aiDescription?: string): number {
+    const res = this.db
+      .prepare("INSERT INTO media_attachments(sessionId, filename, mimeType, dataB64, caption, aiDescription, createdAt) VALUES(?,?,?,?,?,?,?)")
+      .run(sessionId, filename, mimeType, dataB64, caption ?? null, aiDescription ?? null, Date.now());
+    return Number(res.lastInsertRowid);
+  }
+
+  getMediaAttachments(sessionId: number): Array<{ id: number; filename: string; mimeType: string; dataB64: string; caption: string | null; aiDescription: string | null; createdAt: number }> {
+    return this.db.prepare("SELECT id, filename, mimeType, dataB64, caption, aiDescription, createdAt FROM media_attachments WHERE sessionId = ? ORDER BY createdAt ASC").all(sessionId) as Array<{ id: number; filename: string; mimeType: string; dataB64: string; caption: string | null; aiDescription: string | null; createdAt: number }>;
+  }
+
+  deleteMediaAttachment(id: number): boolean {
+    return this.db.prepare("DELETE FROM media_attachments WHERE id = ?").run(id).changes > 0;
   }
 }

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppState } from "../shared/types";
+import type { AppState, CaptureRule, AppTag, WebhookConfig, RelatedCapture } from "../shared/types";
 import { IPC } from "../shared/types";
 
 const api = {
@@ -76,7 +76,38 @@ const api = {
     const wrapped = (_event: unknown, info: { percent: number }) => listener(info);
     ipcRenderer.on(IPC.PUSH_UPDATE_PROGRESS, wrapped);
     return () => ipcRenderer.off(IPC.PUSH_UPDATE_PROGRESS, wrapped);
-  }
+  },
+  onRelatedCaptures: (listener: (captures: RelatedCapture[]) => void) => {
+    const wrapped = (_event: unknown, captures: RelatedCapture[]) => listener(captures);
+    ipcRenderer.on(IPC.PUSH_RELATED_CAPTURES, wrapped);
+    return () => ipcRenderer.off(IPC.PUSH_RELATED_CAPTURES, wrapped);
+  },
+  // Capture rules
+  listRules: () => ipcRenderer.invoke(IPC.RULES_LIST) as Promise<CaptureRule[]>,
+  addRule: (rule: Omit<CaptureRule, "id" | "createdAt">) => ipcRenderer.invoke(IPC.RULES_ADD, rule) as Promise<number>,
+  updateRule: (id: number, rule: Partial<CaptureRule>) => ipcRenderer.invoke(IPC.RULES_UPDATE, id, rule) as Promise<boolean>,
+  deleteRule: (id: number) => ipcRenderer.invoke(IPC.RULES_DELETE, id) as Promise<boolean>,
+  // App tags
+  listAppTags: () => ipcRenderer.invoke(IPC.APP_TAGS_LIST) as Promise<AppTag[]>,
+  setAppTag: (appName: string, tag: string) => ipcRenderer.invoke(IPC.APP_TAGS_SET, appName, tag) as Promise<boolean>,
+  deleteAppTag: (appName: string) => ipcRenderer.invoke(IPC.APP_TAGS_DELETE, appName) as Promise<boolean>,
+  // Webhooks
+  listWebhooks: () => ipcRenderer.invoke(IPC.WEBHOOKS_LIST) as Promise<WebhookConfig[]>,
+  addWebhook: (hook: Omit<WebhookConfig, "id" | "createdAt">) => ipcRenderer.invoke(IPC.WEBHOOKS_ADD, hook) as Promise<number>,
+  updateWebhook: (id: number, hook: Partial<WebhookConfig>) => ipcRenderer.invoke(IPC.WEBHOOKS_UPDATE, id, hook) as Promise<boolean>,
+  deleteWebhook: (id: number) => ipcRenderer.invoke(IPC.WEBHOOKS_DELETE, id) as Promise<boolean>,
+  testWebhook: (id: number) => ipcRenderer.invoke(IPC.WEBHOOKS_TEST, id) as Promise<{ ok: boolean; status?: number; error?: string }>,
+  // Media attachments
+  addMedia: (sessionId: number, filename: string, mimeType: string, dataB64: string, caption?: string) =>
+    ipcRenderer.invoke(IPC.MEDIA_ADD, sessionId, filename, mimeType, dataB64, caption) as Promise<{ id: number; aiDescription: string | null }>,
+  listMedia: (sessionId: number) => ipcRenderer.invoke(IPC.MEDIA_LIST, sessionId) as Promise<import("../shared/types").MediaAttachment[]>,
+  deleteMedia: (id: number) => ipcRenderer.invoke(IPC.MEDIA_DELETE, id) as Promise<boolean>,
+  // AI extras
+  aiDescribeImage: (mimeType: string, dataB64: string) => ipcRenderer.invoke(IPC.AI_DESCRIBE_IMAGE, mimeType, dataB64) as Promise<string | null>,
+  aiRelatedCaptures: (sessionId: number, text: string) => ipcRenderer.invoke(IPC.AI_RELATED_CAPTURES, sessionId, text) as Promise<RelatedCapture[]>,
+  // Voice
+  voiceTranscribe: (sessionId: number, audioBase64: string, mimeType: string) =>
+    ipcRenderer.invoke(IPC.VOICE_TRANSCRIBE, sessionId, audioBase64, mimeType) as Promise<{ ok: boolean; transcript?: string; error?: string }>,
 };
 
 contextBridge.exposeInMainWorld("sessionCaptureApi", api);

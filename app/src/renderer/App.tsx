@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AppState, EventRow, SessionRow } from "../shared/types";
+import type { AppState, EventRow, SessionRow, RelatedCapture } from "../shared/types";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -13,9 +13,12 @@ import {
   EllipsisHorizontalIcon,
   PlayIcon,
   ShareIcon as ShareIconSolid,
-  StopIcon
+  StopIcon,
+  ShieldCheckIcon,
+  MicrophoneIcon,
+  XMarkIcon
 } from "@heroicons/react/24/solid";
-import { Cog6ToothIcon, MagnifyingGlassIcon, SparklesIcon, ChevronDownIcon } from "@heroicons/react/24/outline";
+import { Cog6ToothIcon, MagnifyingGlassIcon, SparklesIcon, ChevronDownIcon, LightBulbIcon, QueueListIcon } from "@heroicons/react/24/outline";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { SettingsModal } from "./SettingsModal";
 import { SearchPalette } from "./SearchPalette";
@@ -85,6 +88,165 @@ function DailySummaryCard({ dateStr, enabled }: { dateStr: string; enabled: bool
   );
 }
 
+function TranscriptModal({ events, sessionTitle, onClose }: { events: EventRow[]; sessionTitle: string; onClose: () => void }) {
+  const voiceEvents = events.filter((e) => e.source === "voice");
+
+  function handleOverlayClick(e: { target: EventTarget | null; currentTarget: EventTarget | null }) {
+    if (e.target === e.currentTarget) onClose();
+  }
+
+  function copyAll() {
+    const text = voiceEvents
+      .map((e) => {
+        const time = new Date(e.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        return `[${time}] ${e.text.trim()}`;
+      })
+      .join("\n\n");
+    navigator.clipboard.writeText(text);
+  }
+
+  return (
+    <div className="transcript-overlay" onClick={handleOverlayClick}>
+      <div className="transcript-modal">
+        <div className="transcript-header">
+          <div className="transcript-title-row">
+            <QueueListIcon className="transcript-title-icon" />
+            <span className="transcript-title">Transcript</span>
+            <span className="transcript-session-name">{sessionTitle}</span>
+          </div>
+          <div className="transcript-header-actions">
+            {voiceEvents.length > 0 && (
+              <button className="transcript-copy-btn" onClick={copyAll} title="Copy full transcript">
+                <ClipboardDocumentIcon style={{ width: 14, height: 14 }} />
+                Copy all
+              </button>
+            )}
+            <button className="transcript-close-btn" onClick={onClose} aria-label="Close">
+              <XMarkIcon style={{ width: 16, height: 16 }} />
+            </button>
+          </div>
+        </div>
+
+        <div className="transcript-body">
+          {voiceEvents.length === 0 ? (
+            <div className="transcript-empty">
+              <MicrophoneIcon style={{ width: 28, height: 28, opacity: 0.3 }} />
+              <p>No voice captures in this session yet.</p>
+              <p className="transcript-empty-hint">Use the mic button in the toolbar to record.</p>
+            </div>
+          ) : (
+            voiceEvents.map((e) => {
+              const time = new Date(e.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+              return (
+                <div key={e.id} className="transcript-entry">
+                  <div className="transcript-entry-meta">
+                    <MicrophoneIcon style={{ width: 12, height: 12 }} />
+                    <span className="transcript-entry-time">{time}</span>
+                  </div>
+                  <p className="transcript-entry-text">{e.text.trim()}</p>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RelatedCapturesPanel({ captures, onNavigate }: { captures: RelatedCapture[]; onNavigate: (sessionId: number) => void }) {
+  const [expanded, setExpanded] = useState(true);
+  if (captures.length === 0) return null;
+  return (
+    <div className="related-captures-panel">
+      <button className="related-captures-header" onClick={() => setExpanded((e) => !e)}>
+        <LightBulbIcon className="related-captures-icon" />
+        <span>Related from memory</span>
+        <ChevronDownIcon className={`daily-summary-chevron ${expanded ? "expanded" : ""}`} />
+      </button>
+      {expanded && (
+        <div className="related-captures-body">
+          {captures.map((c) => (
+            <button key={c.eventId} className="related-capture-row" onClick={() => onNavigate(c.sessionId)}>
+              <span className="related-capture-session">{c.sessionTitle}</span>
+              <span className="related-capture-text">{c.text.slice(0, 120)}{c.text.length > 120 ? "…" : ""}</span>
+              <span className="related-capture-score">{Math.round(c.score * 100)}% match</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PrivacyOnboardingModal({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }) {
+  const QUICK_BLOCKS = [
+    { label: "1Password", pattern: "1password", checked: true },
+    { label: "Terminal", pattern: "terminal", checked: false },
+    { label: "Keychain Access", pattern: "keychain", checked: true },
+    { label: "Banking (Safari)", pattern: "safari", checked: false },
+    { label: "iTerm2", pattern: "iterm", checked: false },
+  ];
+  const [checked, setChecked] = useState<Record<string, boolean>>(
+    Object.fromEntries(QUICK_BLOCKS.map((b) => [b.pattern, b.checked]))
+  );
+  const [saving, setSaving] = useState(false);
+
+  async function handleConfirm() {
+    setSaving(true);
+    for (const b of QUICK_BLOCKS) {
+      if (checked[b.pattern]) {
+        try {
+          await window.sessionCaptureApi.addRule({ appPattern: b.pattern, action: "block", minWords: 0, extractCitations: false, note: `Privacy: ${b.label}` });
+        } catch {}
+      }
+    }
+    setSaving(false);
+    onDone();
+  }
+
+  return (
+    <div className="settings-overlay" style={{ zIndex: 9999 }}>
+      <div className="settings-modal" style={{ maxWidth: 460, minHeight: "auto" }}>
+        <div className="settings-content" style={{ padding: 32 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <ShieldCheckIcon style={{ width: 24, height: 24, color: "var(--accent)" }} />
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Privacy First</h2>
+          </div>
+          <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 20, lineHeight: 1.5 }}>
+            Do Not Forget captures text from every app while recording. Choose which apps should <strong>never</strong> be captured.
+            You can always change this in Settings → Capture Rules.
+          </p>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
+            {QUICK_BLOCKS.map((b) => (
+              <label key={b.pattern} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={!!checked[b.pattern]}
+                  onChange={(e) => setChecked((prev) => ({ ...prev, [b.pattern]: e.target.checked }))}
+                  style={{ width: 16, height: 16, cursor: "pointer" }}
+                />
+                <span>Block <strong>{b.label}</strong></span>
+              </label>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="about-update-btn about-update-available" style={{ flex: 1 }} onClick={handleConfirm} disabled={saving}>
+              {saving ? "Saving…" : "Apply & Continue"}
+            </button>
+            <button className="about-update-btn" onClick={onSkip}>Skip for now</button>
+          </div>
+          <p style={{ fontSize: 11, color: "var(--text-tertiary, #999)", marginTop: 12, textAlign: "center" }}>
+            All data stays local on your Mac. Nothing is sent to any server.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const [state, setState] = useState<AppState>({ recording: false, currentSessionId: null, wsClients: 0 });
   const [sessions, setSessions] = useState<SessionRow[]>([]);
@@ -105,6 +267,14 @@ export function App() {
   const [settingsVersion, setSettingsVersion] = useState(0);
   const [draftVersion, setDraftVersion] = useState(0);
   const [updateAvailable, setUpdateAvailable] = useState<{ version: string; ready: boolean } | null>(null);
+  const [relatedCaptures, setRelatedCaptures] = useState<RelatedCapture[]>([]);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
+  const [voiceRecording, setVoiceRecording] = useState(false);
+  const [voiceTranscribing, setVoiceTranscribing] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const titleFocused = useRef(false);
   const titleSaveTimer = useRef<ReturnType<typeof setTimeout>>();
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -172,8 +342,18 @@ export function App() {
       setUserName(s.name || "");
       setAiEnabled(s.aiEnabled === "true");
       setDailyRecapEnabled(s.dailyRecapEnabled !== "false");
+      // Show onboarding on first launch (no name set yet)
+      if (!s.privacyOnboardingDone && !s.name) {
+        setShowOnboarding(true);
+      }
     }).catch(() => {});
     refreshSessions();
+
+    const offRelated = window.sessionCaptureApi.onRelatedCaptures((captures) => {
+      setRelatedCaptures(captures);
+      // Auto-dismiss related captures after 30s
+      setTimeout(() => setRelatedCaptures([]), 30000);
+    });
 
     const offAvailable = window.sessionCaptureApi.onUpdateAvailable((info) => {
       setUpdateAvailable({ version: info.version, ready: false });
@@ -202,6 +382,7 @@ export function App() {
       offDownloaded();
       offState();
       offEvents();
+      offRelated();
     };
   }, [selectedSessionId]);
 
@@ -295,6 +476,65 @@ export function App() {
   async function onStartHelper() {
     await window.sessionCaptureApi.startHelper();
     setShowMore(false);
+  }
+
+  async function onToggleVoice() {
+    if (voiceRecording) {
+      // Stop recording — mediaRecorder's onstop will handle the rest
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+    if (!selectedSessionId) return;
+    setVoiceError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : "audio/ogg";
+      const recorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setVoiceRecording(false);
+        setVoiceTranscribing(true);
+
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const dataUrl = reader.result as string;
+          const base64 = dataUrl.split(",")[1];
+          const cleanMime = mimeType.split(";")[0];
+
+          const result = await window.sessionCaptureApi.voiceTranscribe(
+            selectedSessionId!, base64, cleanMime
+          );
+
+          setVoiceTranscribing(false);
+          if (!result.ok) {
+            setVoiceError(result.error ?? "Transcription failed.");
+            setTimeout(() => setVoiceError(null), 4000);
+          } else {
+            await refreshEvents(selectedSessionId!);
+            showToast("Voice captured");
+          }
+        };
+        reader.readAsDataURL(blob);
+      };
+
+      recorder.start();
+      setVoiceRecording(true);
+    } catch (err: any) {
+      setVoiceError(err.message?.includes("Permission") ? "Microphone access denied." : "Could not access microphone.");
+      setTimeout(() => setVoiceError(null), 4000);
+    }
   }
 
   const helperConnected = state.wsClients > 0;
@@ -495,6 +735,25 @@ export function App() {
                     {state.recording ? <StopIcon className="icon" /> : <PlayIcon className="icon" />}
                   </button>
                   <button
+                    className={voiceRecording ? "action-btn voice-recording-btn" : voiceTranscribing ? "action-btn voice-transcribing-btn" : "action-btn"}
+                    onClick={onToggleVoice}
+                    disabled={!selectedSessionId || voiceTranscribing}
+                    aria-label={voiceRecording ? "Stop voice recording" : "Record voice"}
+                    data-tooltip={voiceRecording ? "Stop & transcribe" : voiceTranscribing ? "Transcribing…" : "Voice capture"} data-tooltip-pos="bottom"
+                  >
+                    <MicrophoneIcon className="icon" />
+                  </button>
+                  {events.some((e) => e.source === "voice") && (
+                    <button
+                      className="action-btn"
+                      onClick={() => setShowTranscript(true)}
+                      aria-label="View transcript"
+                      data-tooltip="View transcript" data-tooltip-pos="bottom"
+                    >
+                      <QueueListIcon className="icon" />
+                    </button>
+                  )}
+                  <button
                     className="action-btn"
                     disabled={!selectedSessionId}
                     onClick={onCreateShare}
@@ -549,6 +808,13 @@ export function App() {
                 </div>
               </header>
 
+              {voiceError && (
+                <div className="voice-error-banner">
+                  <MicrophoneIcon style={{ width: 13, height: 13, flexShrink: 0 }} />
+                  {voiceError}
+                </div>
+              )}
+
               {shareUrl ? (
                 <div className="share-box">
                   <a
@@ -583,6 +849,15 @@ export function App() {
                 onStartRecording={onToggleRecording}
                 draftVersion={draftVersion}
               />
+              {relatedCaptures.length > 0 && (
+                <RelatedCapturesPanel
+                  captures={relatedCaptures}
+                  onNavigate={(sid) => {
+                    setSelectedSessionId(sid);
+                    setRelatedCaptures([]);
+                  }}
+                />
+              )}
               {aiEnabled && (
                 <FloatingChat
                   key={`${selectedSessionId}-${settingsVersion}`}
@@ -612,6 +887,14 @@ export function App() {
         />
       )}
 
+      {showTranscript && (
+        <TranscriptModal
+          events={events}
+          sessionTitle={selectedSession?.title ?? "Session"}
+          onClose={() => setShowTranscript(false)}
+        />
+      )}
+
       {showSettings && (
         <SettingsModal
           onClose={() => {
@@ -631,6 +914,19 @@ export function App() {
             setEvents([]);
             setView("list");
             await refreshSessions();
+          }}
+        />
+      )}
+
+      {showOnboarding && (
+        <PrivacyOnboardingModal
+          onDone={() => {
+            setShowOnboarding(false);
+            window.sessionCaptureApi.setSetting("privacyOnboardingDone", "true").catch(() => {});
+          }}
+          onSkip={() => {
+            setShowOnboarding(false);
+            window.sessionCaptureApi.setSetting("privacyOnboardingDone", "true").catch(() => {});
           }}
         />
       )}

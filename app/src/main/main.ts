@@ -6,7 +6,7 @@ import { writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { WebSocketServer, WebSocket } from "ws";
 import { Tunnel as CfTunnel, bin as cfBin, install as cfInstall } from "cloudflared";
-import type { CapturePayload, AppState } from "../shared/types";
+import type { CapturePayload, AppState, CaptureRule, AppTag, WebhookConfig, MediaAttachment } from "../shared/types";
 import { IPC } from "../shared/types";
 import { SessionDb } from "./db";
 import { sessionToJson, sessionToMarkdown } from "./exporters";
@@ -77,7 +77,8 @@ function callAiWorker(
   apiKey: string,
   systemPrompt: string,
   userMessage: string,
-  maxTokens: number = 2048
+  maxTokens: number = 2048,
+  imageDataUri?: string
 ): Promise<string> {
   if (!aiProc || !aiProcReady) {
     return Promise.reject(new Error("AI worker not available"));
@@ -85,7 +86,23 @@ function callAiWorker(
   return new Promise((resolve, reject) => {
     const id = randomBytes(8).toString("hex");
     aiPending.set(id, { resolve, reject });
-    aiProc!.postMessage({ id, type: "callAi", provider, model, apiKey, systemPrompt, userMessage, maxTokens });
+    aiProc!.postMessage({ id, type: "callAi", provider, model, apiKey, systemPrompt, userMessage, maxTokens, imageDataUri });
+  });
+}
+
+function transcribeAudioWorker(
+  provider: string,
+  apiKey: string,
+  audioBase64: string,
+  mimeType: string
+): Promise<string> {
+  if (!aiProc || !aiProcReady) {
+    return Promise.reject(new Error("AI worker not available"));
+  }
+  return new Promise((resolve, reject) => {
+    const id = randomBytes(8).toString("hex");
+    aiPending.set(id, { resolve, reject });
+    aiProc!.postMessage({ id, type: "transcribeAudio", provider, apiKey, audioBase64, mimeType });
   });
 }
 let helperProc: ChildProcess | null = null;
@@ -211,6 +228,11 @@ function startRecording(targetSessionId?: number | null) {
   setTrayMenu();
   sendRecordingStateToHelpers();
   broadcastState();
+
+  const session = db.getSession(currentSessionId!);
+  if (session) {
+    fireWebhooks("session_start", { sessionId: currentSessionId!, sessionTitle: session.title }).catch(() => {});
+  }
 }
 
 function stopRecording() {
@@ -223,6 +245,75 @@ function stopRecording() {
 
   if (sessionId) {
     generateSmartSummary(sessionId).catch(() => {});
+    const session = db.getSession(sessionId);
+    const events = db.getEvents(sessionId);
+    if (session) {
+      fireWebhooks("session_end", {
+        sessionId,
+        sessionTitle: session.title,
+        eventCount: events.length,
+        apps: [...new Set(events.map((e) => e.app))],
+        createdAt: session.createdAt
+      }).catch(() => {});
+    }
+  }
+}
+
+// ── Related Captures (Thought Completion) ───────────────────────────────────
+
+/** Simple TF-IDF–style similarity for fast in-process related capture lookup. */
+function computeTextSimilarity(a: string, b: string): number {
+  const tokenize = (s: string) => new Set(s.toLowerCase().replace(/[^\w\s]/g, " ").split(/\s+/).filter((t) => t.length > 2));
+  const ta = tokenize(a);
+  const tb = tokenize(b);
+  if (!ta.size || !tb.size) return 0;
+  let intersection = 0;
+  for (const t of ta) { if (tb.has(t)) intersection++; }
+  return intersection / (ta.size + tb.size - intersection);
+}
+
+async function findAndPushRelatedCaptures(sessionId: number, newText: string) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const candidates = db.getRecentEventsForSimilarity(sessionId, 200);
+  const scored = candidates
+    .map((c) => ({ ...c, score: computeTextSimilarity(newText, c.text) }))
+    .filter((c) => c.score >= 0.15)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4);
+
+  if (scored.length > 0) {
+    mainWindow.webContents.send(IPC.PUSH_RELATED_CAPTURES, scored);
+
+    // Persist high-confidence links to the semantic knowledge graph
+    const highConfidence = scored.filter((c) => c.score >= 0.25);
+    if (highConfidence.length > 0) {
+      // Get the most recent event in this session to link from
+      const recentEvents = db.getRecentEventsForSimilarity(sessionId, 1);
+      const sourceEventId = recentEvents[0]?.id;
+      if (sourceEventId) {
+        db.addSemanticLinks(
+          highConfidence.map((c) => ({ sourceEventId, targetEventId: c.id, score: c.score }))
+        );
+      }
+    }
+  }
+}
+
+// ── Webhook Firing ───────────────────────────────────────────────────────────
+
+async function fireWebhooks(trigger: string, payload: Record<string, unknown>) {
+  const hooks = db.listWebhooks().filter((h) => h.enabled && h.trigger === trigger);
+  for (const hook of hooks) {
+    try {
+      await fetch(hook.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trigger, ...payload, app: "Do Not Forget" }),
+        signal: AbortSignal.timeout(10000)
+      });
+    } catch {
+      // Silently fail — webhook errors shouldn't interrupt the user
+    }
   }
 }
 
@@ -253,6 +344,31 @@ function getModelForProvider(provider: string, model: string): string {
   const valid = VALID_MODELS[provider] || [];
   if (model && valid.includes(model)) return model;
   return DEFAULT_MODELS[provider] || "gpt-5.2";
+}
+
+// ── Citation Extraction ──────────────────────────────────────────────────────
+
+async function extractCitationsFromCapture(sessionId: number, text: string) {
+  const settings = db.getAllSettings();
+  if (settings.aiEnabled !== "true") return;
+  const apiKey = await keychainGet("aiApiKey");
+  if (!apiKey) return;
+
+  const provider = settings.aiProvider || "openai";
+  const model = getModelForProvider(provider, settings.aiModel || "");
+  const systemPrompt = `You are a citation extractor. Given text from a research source, extract any references, URLs, author names, paper titles, publication names, or bibliographic data. Format each citation on its own line prefixed with "— ". If there are no citations, respond with exactly: NO_CITATIONS`;
+
+  try {
+    const result = await callAiProvider(provider, model, apiKey, systemPrompt, text.slice(0, 4000), 512);
+    if (!result || result.trim() === "NO_CITATIONS") return;
+
+    const existing = db.getDraft(sessionId);
+    const citationBlock = `\n\n### Extracted Citations\n${result.trim()}`;
+    db.saveDraft(sessionId, existing ? existing + citationBlock : citationBlock);
+    broadcastState();
+  } catch {
+    // Best-effort
+  }
 }
 
 function buildRichEventContext(events: Array<{ ts: number; app: string; window: string | null; source: string; text: string }>): string {
@@ -710,9 +826,21 @@ function startCaptureSocketServer() {
         normalizedPayload.app.toLowerCase() === "electron" &&
         (normalizedPayload.window ?? "").toLowerCase().includes("do not forget");
       if (isOwnUiCapture) return;
+
+      // Enforce capture rules
+      const wordCount = normalizedPayload.text.trim().split(/\s+/).filter(Boolean).length;
+      const ruleCheck = db.checkCaptureRule(normalizedPayload.app, wordCount);
+      if (!ruleCheck.allowed) return;
+
       db.insertCapture(currentSessionId, normalizedPayload);
       broadcastState();
       generateAutoTitle(currentSessionId).catch(() => {});
+      findAndPushRelatedCaptures(currentSessionId, normalizedPayload.text).catch(() => {});
+
+      // If the matching rule requests citation extraction, run it async
+      if (ruleCheck.extractCitations) {
+        extractCitationsFromCapture(currentSessionId, normalizedPayload.text).catch(() => {});
+      }
     });
   });
 }
@@ -1006,6 +1134,143 @@ Format your response as:
 
   ipcMain.handle(IPC.APP_INSTALL_UPDATE, () => {
     autoUpdater.quitAndInstall();
+  });
+
+  // ── Capture Rules ────────────────────────────────────────────────────────
+  ipcMain.handle(IPC.RULES_LIST, () => db.listCaptureRules());
+  ipcMain.handle(IPC.RULES_ADD, (_e, rule: Omit<CaptureRule, "id" | "createdAt">) => db.addCaptureRule(rule));
+  ipcMain.handle(IPC.RULES_UPDATE, (_e, id: number, rule: Partial<CaptureRule>) => db.updateCaptureRule(id, rule));
+  ipcMain.handle(IPC.RULES_DELETE, (_e, id: number) => db.deleteCaptureRule(id));
+
+  // ── App Tags ─────────────────────────────────────────────────────────────
+  ipcMain.handle(IPC.APP_TAGS_LIST, () => db.listAppTags());
+  ipcMain.handle(IPC.APP_TAGS_SET, (_e, appName: string, tag: string) => { db.setAppTag(appName, tag); return true; });
+  ipcMain.handle(IPC.APP_TAGS_DELETE, (_e, appName: string) => { db.deleteAppTag(appName); return true; });
+
+  // ── Webhooks ─────────────────────────────────────────────────────────────
+  ipcMain.handle(IPC.WEBHOOKS_LIST, () => db.listWebhooks());
+  ipcMain.handle(IPC.WEBHOOKS_ADD, (_e, hook: Omit<WebhookConfig, "id" | "createdAt">) => db.addWebhook(hook));
+  ipcMain.handle(IPC.WEBHOOKS_UPDATE, (_e, id: number, hook: Partial<WebhookConfig>) => db.updateWebhook(id, hook));
+  ipcMain.handle(IPC.WEBHOOKS_DELETE, (_e, id: number) => db.deleteWebhook(id));
+  ipcMain.handle(IPC.WEBHOOKS_TEST, async (_e, id: number) => {
+    const hooks = db.listWebhooks();
+    const hook = hooks.find((h) => h.id === id);
+    if (!hook) return { ok: false, error: "Webhook not found" };
+    try {
+      const res = await fetch(hook.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trigger: hook.trigger, test: true, app: "Do Not Forget" }),
+        signal: AbortSignal.timeout(8000)
+      });
+      return { ok: res.ok, status: res.status };
+    } catch (err: any) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // ── Media Attachments ─────────────────────────────────────────────────────
+  ipcMain.handle(IPC.MEDIA_LIST, (_e, sessionId: number) => db.getMediaAttachments(sessionId));
+  ipcMain.handle(IPC.MEDIA_DELETE, (_e, id: number) => db.deleteMediaAttachment(id));
+  ipcMain.handle(IPC.MEDIA_ADD, async (_e, sessionId: number, filename: string, mimeType: string, dataB64: string, caption?: string) => {
+    const settings = db.getAllSettings();
+    let aiDescription: string | undefined;
+
+    // If AI is configured, describe the image using whichever provider is active
+    if (settings.aiEnabled === "true" && mimeType.startsWith("image/")) {
+      const apiKey = await keychainGet("aiApiKey");
+      const provider = settings.aiProvider || "openai";
+      if (apiKey) {
+        try {
+          aiDescription = await callAiWorker(
+            provider,
+            getModelForProvider(provider, settings.aiModel || ""),
+            apiKey,
+            "Describe this image concisely in 1-2 sentences. Focus on the most important content, text, or structure visible.",
+            "What is in this image?",
+            256,
+            `data:${mimeType};base64,${dataB64}`
+          );
+        } catch {
+          // Vision description is best-effort
+        }
+      }
+    }
+
+    const id = db.addMediaAttachment(sessionId, filename, mimeType, dataB64, caption, aiDescription);
+    return { id, aiDescription: aiDescription ?? null };
+  });
+
+  // ── AI: Describe Image (standalone) ──────────────────────────────────────
+  ipcMain.handle(IPC.AI_DESCRIBE_IMAGE, async (_e, mimeType: string, dataB64: string) => {
+    const settings = db.getAllSettings();
+    if (settings.aiEnabled !== "true") return null;
+    const apiKey = await keychainGet("aiApiKey");
+    if (!apiKey) return null;
+    const provider = settings.aiProvider || "openai";
+    try {
+      return await callAiWorker(
+        provider,
+        getModelForProvider(provider, settings.aiModel || ""),
+        apiKey,
+        "Describe this image concisely in 1-2 sentences. Focus on the most important content, text, or structure visible.",
+        "What is in this image?",
+        256,
+        `data:${mimeType};base64,${dataB64}`
+      );
+    } catch {
+      return null;
+    }
+  });
+
+  // ── AI: Related Captures (on-demand) ─────────────────────────────────────
+  ipcMain.handle(IPC.AI_RELATED_CAPTURES, (_e, sessionId: number, text: string) => {
+    const candidates = db.getRecentEventsForSimilarity(sessionId, 200);
+    return candidates
+      .map((c) => ({ ...c, score: computeTextSimilarity(text, c.text) }))
+      .filter((c) => c.score >= 0.12)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 6);
+  });
+
+  // ── Voice Capture: transcribe + insert as event ───────────────────────────
+  ipcMain.handle(IPC.VOICE_TRANSCRIBE, async (_e, sessionId: number, audioBase64: string, mimeType: string) => {
+    const settings = db.getAllSettings();
+    if (settings.aiEnabled !== "true") return { ok: false, error: "AI is not enabled." };
+
+    // Audio provider can differ from text AI provider — falls back to main provider
+    const audioProvider = settings.audioProvider || settings.aiProvider || "openai";
+
+    // Resolve API key: prefer dedicated audio key, then fall back to main AI key
+    const audioApiKey = await keychainGet("audioApiKey");
+    const mainApiKey = await keychainGet("aiApiKey");
+    const apiKey = audioApiKey || mainApiKey;
+
+    if (!apiKey) return { ok: false, error: "No API key configured." };
+    const provider = audioProvider;
+
+    try {
+      const transcript = await transcribeAudioWorker(provider, apiKey, audioBase64, mimeType);
+      if (!transcript.trim()) return { ok: false, error: "No speech detected." };
+
+      // Insert as a voice event into the session
+      if (sessionId) {
+        const payload: CapturePayload = {
+          ts: Date.now(),
+          app: "Microphone",
+          window: undefined,
+          source: "voice",
+          text: transcript
+        };
+        db.insertCapture(sessionId, payload);
+        broadcastState();
+        generateAutoTitle(sessionId).catch(() => {});
+      }
+
+      return { ok: true, transcript };
+    } catch (err: any) {
+      return { ok: false, error: err.message || "Transcription failed." };
+    }
   });
 }
 

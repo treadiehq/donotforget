@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { DocumentTextIcon, PlayIcon } from "@heroicons/react/24/solid";
-import type { EventRow } from "../shared/types";
+import { DocumentTextIcon, PlayIcon, PhotoIcon } from "@heroicons/react/24/solid";
+import type { EventRow, MediaAttachment } from "../shared/types";
 
 function eventsToMarkdown(events: EventRow[]): string {
   if (events.length === 0) return "";
@@ -19,8 +19,9 @@ function eventsToMarkdown(events: EventRow[]): string {
         hour: "numeric",
         minute: "2-digit",
       });
+      const sourceLabel = event.source === "voice" ? "🎙 voice" : event.source;
       lines.push(`### ${appWindow}`);
-      lines.push(`> ${event.source} - ${time}`);
+      lines.push(`> ${sourceLabel} - ${time}`);
       lines.push("");
       lastApp = event.app;
       lastWindow = event.window ?? "";
@@ -44,12 +45,31 @@ interface MarkdownEditorProps {
   draftVersion?: number;
 }
 
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function insertAtCursor(ta: HTMLTextAreaElement, text: string): string {
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  return ta.value.substring(0, start) + text + ta.value.substring(end);
+}
+
 export function MarkdownEditor({ events, sessionTitle, mode, recording, sessionId, onStartRecording, draftVersion = 0 }: MarkdownEditorProps) {
   const [content, setContent] = useState("");
   const [lastEventCount, setLastEventCount] = useState(0);
   const [draftLoaded, setDraftLoaded] = useState(false);
+  const [mediaAttachments, setMediaAttachments] = useState<MediaAttachment[]>([]);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const contentRef = useRef(content);
   const sessionIdRef = useRef(sessionId);
@@ -65,6 +85,57 @@ export function MarkdownEditor({ events, sessionTitle, mode, recording, sessionI
       window.sessionCaptureApi.saveDraft(sessionIdRef.current, contentRef.current).catch(() => {});
     }
   }, []);
+
+  // Load media attachments when session changes
+  useEffect(() => {
+    if (!sessionId) { setMediaAttachments([]); return; }
+    window.sessionCaptureApi.listMedia(sessionId).then(setMediaAttachments).catch(() => {});
+  }, [sessionId]);
+
+  const handleImageFile = useCallback(async (file: File) => {
+    if (!sessionIdRef.current) return;
+    if (!file.type.startsWith("image/")) return;
+    setUploadingImage(true);
+    try {
+      const b64 = await fileToBase64(file);
+      const result = await window.sessionCaptureApi.addMedia(sessionIdRef.current, file.name, file.type, b64);
+      const dataUri = `data:${file.type};base64,${b64}`;
+      const altText = result.aiDescription ? result.aiDescription.slice(0, 80) : file.name;
+      const mdImage = `\n\n![${altText}](${dataUri})\n`;
+
+      setContent((prev) => {
+        if (textareaRef.current) {
+          const updated = insertAtCursor(textareaRef.current, mdImage);
+          requestAnimationFrame(() => {
+            if (textareaRef.current) {
+              const pos = textareaRef.current.selectionStart + mdImage.length;
+              textareaRef.current.selectionStart = textareaRef.current.selectionEnd = pos;
+            }
+          });
+          return updated;
+        }
+        return prev + mdImage;
+      });
+
+      setMediaAttachments((prev) => [...prev, { id: result.id, filename: file.name, mimeType: file.type, dataB64: b64, caption: null, aiDescription: result.aiDescription, createdAt: Date.now() }]);
+    } catch {}
+    setUploadingImage(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) await handleImageFile(file);
+  }, [handleImageFile]);
+
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const file = Array.from(e.clipboardData.files).find((f) => f.type.startsWith("image/"));
+    if (file) {
+      e.preventDefault();
+      await handleImageFile(file);
+    }
+  }, [handleImageFile]);
 
   // Load draft on session change
   useEffect(() => {
@@ -199,7 +270,12 @@ export function MarkdownEditor({ events, sessionTitle, mode, recording, sessionI
   }
 
   return (
-    <div className="md-editor">
+    <div
+      className={`md-editor ${dragOver ? "drag-over" : ""}`}
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={handleDrop}
+    >
       {mode === "preview" ? (
         <div className="md-preview prose" ref={previewRef}>
           <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
@@ -212,6 +288,7 @@ export function MarkdownEditor({ events, sessionTitle, mode, recording, sessionI
             value={content}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             spellCheck={false}
           />
         </div>
@@ -220,7 +297,34 @@ export function MarkdownEditor({ events, sessionTitle, mode, recording, sessionI
         <span>{stats.words} words</span>
         <span>{stats.chars} chars</span>
         <span>{events.length} captures</span>
+        <span className="md-footer-spacer" />
+        <button
+          className={`md-image-btn ${uploadingImage ? "uploading" : ""}`}
+          title="Insert image (or drag & drop / paste)"
+          onClick={() => imageInputRef.current?.click()}
+          disabled={!sessionId || uploadingImage}
+        >
+          <PhotoIcon style={{ width: 14, height: 14 }} />
+          {uploadingImage ? " Uploading…" : " Image"}
+        </button>
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (file) await handleImageFile(file);
+            e.target.value = "";
+          }}
+        />
       </div>
+      {dragOver && (
+        <div className="md-drop-overlay">
+          <PhotoIcon style={{ width: 32, height: 32, opacity: 0.6 }} />
+          <span>Drop image to insert</span>
+        </div>
+      )}
     </div>
   );
 }

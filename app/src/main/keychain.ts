@@ -7,6 +7,7 @@ const PROVIDER_ACCOUNTS: Record<string, string> = {
   openaiApiKey:   "openai-api-key",
   anthropicApiKey:"anthropic-api-key",
   googleApiKey:   "google-api-key",
+  audioApiKey:    "audio-api-key",
 };
 
 /** Keys that must be stored in the Keychain, never in SQLite. */
