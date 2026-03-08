@@ -1073,18 +1073,58 @@ if (!gotSingleInstanceLock) {
 }
 
 // --- Auto-updater setup ---
-autoUpdater.autoDownload = true;
+autoUpdater.autoDownload = false; // ask the user first
 autoUpdater.autoInstallOnAppQuit = true;
 
-autoUpdater.on("update-available", (info) => {
+autoUpdater.on("update-available", async (info) => {
   mainWindow?.webContents.send("update:available", { version: info.version });
+
+  const { response } = await dialog.showMessageBox({
+    type: "info",
+    title: "Update Available",
+    message: `A new version of Do Not Forget is available!`,
+    detail: `Version ${info.version} is now available — you have ${autoUpdater.currentVersion.version}.\n\nWould you like to download it now?`,
+    buttons: ["Download", "Remind Me Later", "Skip This Version"],
+    defaultId: 0,
+    cancelId: 1,
+    icon: nativeImage.createFromPath(
+      app.isPackaged
+        ? path.join(process.resourcesPath, "../build/icon.png")
+        : path.join(__dirname, "../../../build/icon.png")
+    )
+  });
+
+  if (response === 0) {
+    autoUpdater.downloadUpdate();
+  }
+  // response === 2 (Skip) — do nothing, autoInstallOnAppQuit handles it
 });
-autoUpdater.on("update-downloaded", (info) => {
-  mainWindow?.webContents.send("update:downloaded", { version: info.version });
-});
+
 autoUpdater.on("download-progress", (progress) => {
-  mainWindow?.webContents.send("update:progress", { percent: Math.round(progress.percent) });
+  const percent = Math.round(progress.percent);
+  mainWindow?.webContents.send("update:progress", { percent });
+  mainWindow?.setProgressBar(progress.percent / 100);
 });
+
+autoUpdater.on("update-downloaded", async (info) => {
+  mainWindow?.setProgressBar(-1); // clear progress bar
+  mainWindow?.webContents.send("update:downloaded", { version: info.version });
+
+  const { response } = await dialog.showMessageBox({
+    type: "info",
+    title: "Ready to Install",
+    message: "Update Ready to Install",
+    detail: `Version ${info.version} has been downloaded and is ready to install. Relaunch now to apply the update.`,
+    buttons: ["Install and Relaunch", "Later"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+
+  if (response === 0) {
+    autoUpdater.quitAndInstall();
+  }
+});
+
 autoUpdater.on("error", (err) => {
   console.error("[autoUpdater] error:", err.message);
 });
