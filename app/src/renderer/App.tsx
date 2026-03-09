@@ -361,6 +361,9 @@ export function App() {
     const offDownloaded = window.sessionCaptureApi.onUpdateDownloaded((info) => {
       setUpdateAvailable({ version: info.version, ready: true });
     });
+    const offUpdateError = window.sessionCaptureApi.onUpdateError(() => {
+      setUpdateAvailable(null);
+    });
     const offState = window.sessionCaptureApi.onStateChanged(async (nextState) => {
       const justStartedRecording = nextState.recording && !wasRecordingRef.current;
       wasRecordingRef.current = nextState.recording;
@@ -380,6 +383,7 @@ export function App() {
     return () => {
       offAvailable();
       offDownloaded();
+      offUpdateError();
       offState();
       offEvents();
       offRelated();
@@ -582,7 +586,15 @@ export function App() {
                       Restart to install
                     </button>
                   ) : (
-                    <button disabled>Downloading…</button>
+                    <>
+                      <button disabled>Downloading…</button>
+                      <button
+                        className="update-banner-cancel"
+                        onClick={() => window.sessionCaptureApi.cancelUpdateDownload()}
+                      >
+                        Cancel
+                      </button>
+                    </>
                   )}
                   <button className="update-banner-dismiss" onClick={() => setUpdateAvailable(null)} aria-label="Dismiss">
                     &times;

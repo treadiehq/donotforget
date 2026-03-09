@@ -1136,6 +1136,10 @@ Format your response as:
     autoUpdater.quitAndInstall();
   });
 
+  ipcMain.handle(IPC.APP_CANCEL_UPDATE_DOWNLOAD, () => {
+    notifyDownloadFailed("Download cancelled.");
+  });
+
   // ── Capture Rules ────────────────────────────────────────────────────────
   ipcMain.handle(IPC.RULES_LIST, () => db.listCaptureRules());
   ipcMain.handle(IPC.RULES_ADD, (_e, rule: Omit<CaptureRule, "id" | "createdAt">) => db.addCaptureRule(rule));
@@ -1290,6 +1294,32 @@ if (!gotSingleInstanceLock) {
 autoUpdater.autoDownload = false; // ask the user first
 autoUpdater.autoInstallOnAppQuit = true;
 
+const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;   // 10 minutes total
+const STALLED_NO_PROGRESS_MS = 2 * 60 * 1000; // 2 minutes with no progress = stalled
+let downloadTimeoutId: ReturnType<typeof setTimeout> | null = null;
+let stalledCheckId: ReturnType<typeof setTimeout> | null = null;
+let lastProgressPercent = -1;
+let lastProgressTime = 0;
+
+function clearDownloadTimers() {
+  if (downloadTimeoutId) {
+    clearTimeout(downloadTimeoutId);
+    downloadTimeoutId = null;
+  }
+  if (stalledCheckId) {
+    clearTimeout(stalledCheckId);
+    stalledCheckId = null;
+  }
+  lastProgressPercent = -1;
+  lastProgressTime = 0;
+}
+
+function notifyDownloadFailed(message: string) {
+  clearDownloadTimers();
+  mainWindow?.setProgressBar(-1);
+  mainWindow?.webContents.send(IPC.PUSH_UPDATE_ERROR, { message });
+}
+
 autoUpdater.on("update-available", async (info) => {
   mainWindow?.webContents.send(IPC.PUSH_UPDATE_AVAILABLE, { version: info.version });
 
@@ -1309,19 +1339,33 @@ autoUpdater.on("update-available", async (info) => {
   });
 
   if (response === 0) {
+    clearDownloadTimers();
+    lastProgressTime = Date.now();
+    downloadTimeoutId = setTimeout(() => {
+      notifyDownloadFailed("Download timed out. Check your connection and try again.");
+    }, DOWNLOAD_TIMEOUT_MS);
+    stalledCheckId = setTimeout(function checkStalled() {
+      const now = Date.now();
+      if (lastProgressTime > 0 && now - lastProgressTime > STALLED_NO_PROGRESS_MS) {
+        notifyDownloadFailed("Download stalled. Check your connection and try again.");
+        return;
+      }
+      stalledCheckId = setTimeout(checkStalled, 30 * 1000); // recheck every 30s
+    }, STALLED_NO_PROGRESS_MS);
     autoUpdater.downloadUpdate();
   }
-  // response === 2 (Skip) — do nothing, autoInstallOnAppQuit handles it
 });
 
 autoUpdater.on("download-progress", (progress) => {
-  const percent = Math.round(progress.percent);
-  mainWindow?.webContents.send(IPC.PUSH_UPDATE_PROGRESS, { percent });
+  lastProgressPercent = Math.round(progress.percent);
+  lastProgressTime = Date.now();
+  mainWindow?.webContents.send(IPC.PUSH_UPDATE_PROGRESS, { percent: lastProgressPercent });
   mainWindow?.setProgressBar(progress.percent / 100);
 });
 
 autoUpdater.on("update-downloaded", async (info) => {
-  mainWindow?.setProgressBar(-1); // clear progress bar
+  clearDownloadTimers();
+  mainWindow?.setProgressBar(-1);
   mainWindow?.webContents.send(IPC.PUSH_UPDATE_DOWNLOADED, { version: info.version });
 
   const { response } = await dialog.showMessageBox({
@@ -1341,8 +1385,7 @@ autoUpdater.on("update-downloaded", async (info) => {
 
 autoUpdater.on("error", (err) => {
   console.error("[autoUpdater] error:", err.message);
-  mainWindow?.setProgressBar(-1);
-  mainWindow?.webContents.send(IPC.PUSH_UPDATE_ERROR, { message: err.message });
+  notifyDownloadFailed(err.message);
 });
 
 app.whenReady().then(async () => {

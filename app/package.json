@@ -1,6 +1,6 @@
 {
   "name": "do-not-forget",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "private": true,
   "main": "dist/main/main/main.cjs",
   "scripts": {

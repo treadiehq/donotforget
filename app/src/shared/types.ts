@@ -37,6 +37,7 @@ export const IPC = {
   APP_GET_VERSION: "app:get-version",
   APP_CHECK_FOR_UPDATES: "app:check-for-updates",
   APP_INSTALL_UPDATE: "app:install-update",
+  APP_CANCEL_UPDATE_DOWNLOAD: "app:cancel-update-download",
   // Capture rules
   RULES_LIST: "rules:list",
   RULES_ADD: "rules:add",

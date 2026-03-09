@@ -40,6 +40,7 @@ declare global {
         error?: string;
       }>;
       installUpdate: () => Promise<void>;
+      cancelUpdateDownload: () => Promise<void>;
       // Capture rules
       listRules: () => Promise<CaptureRule[]>;
       addRule: (rule: Omit<CaptureRule, "id" | "createdAt">) => Promise<number>;

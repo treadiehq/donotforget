@@ -1991,6 +1991,16 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   color: #94a3b8 !important;
   background: transparent !important;
 }
+.update-banner-cancel {
+  background: transparent;
+  color: #93c5fd;
+  opacity: 0.9;
+}
+.update-banner-cancel:hover {
+  opacity: 1;
+  text-decoration: underline;
+  background: transparent;
+}
 
 .about-update-available {
   @apply bg-blue-300/10;

@@ -52,6 +52,7 @@ const api = {
     error?: string;
   }>,
   installUpdate: () => ipcRenderer.invoke(IPC.APP_INSTALL_UPDATE) as Promise<void>,
+  cancelUpdateDownload: () => ipcRenderer.invoke(IPC.APP_CANCEL_UPDATE_DOWNLOAD) as Promise<void>,
   onStateChanged: (listener: (state: AppState) => void) => {
     const wrapped = (_event: unknown, state: AppState) => listener(state);
     ipcRenderer.on(IPC.PUSH_STATE_CHANGED, wrapped);
